@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# podinfo's pre-apply hook. It changes nothing and never refuses: it exists so
+# the hook path is executed on every Job run, rather than being first exercised
+# by an application whose failure would matter.
+#
+# Everything it prints lands on stderr with a `podinfo: ` prefix, added by the
+# entrypoint. See the Hooks section of README.md for the environment.
+set -euo pipefail
+
+if [ -n "${OPM_SUITE_PREVIOUS_VALUES:-}" ]; then
+	echo "upgrading in namespace $OPM_SUITE_NAMESPACE from image tag" \
+		"$(jq -r '.image.tag // "(not recorded)"' <"$OPM_SUITE_PREVIOUS_VALUES")"
+else
+	echo "first install into namespace $OPM_SUITE_NAMESPACE; nothing to revert to"
+fi

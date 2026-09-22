@@ -1,0 +1,50 @@
+# The installer, run once (D6). `restartPolicy: Never` and `backoffLimit: 0`:
+# a retry would be a second apply, which is idempotent, but it would also hide
+# which run produced which log. `task job:run` deletes the previous Job before
+# creating this one, so a re-run is one command and one log.
+#
+# imagePullPolicy: Never, because the image is `kind load`ed, never pulled.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: opm-suite-installer
+  namespace: opm-suite
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: opm-suite-installer
+      restartPolicy: Never
+      containers:
+        - name: installer
+          image: localhost/opm-suite-installer:dev
+          imagePullPolicy: Never
+          # No application named: install everything the image carries.
+          args: ["apply"]
+          env:
+            # The suite lands in the Job's own namespace.
+            - name: OPM_SUITE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OPM_SUITE_TIMEOUT
+              value: "300s"
+            # The working copy of the bundle and the synthesized kubeconfig
+            # go here; the root filesystem stays read-only.
+            - name: TMPDIR
+              value: /tmp
+            - name: HOME
+              value: /tmp
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

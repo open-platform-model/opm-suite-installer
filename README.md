@@ -8,13 +8,21 @@ Milestone 1 is podinfo, installed from a bundled `#Module` through a `#ModuleIns
 
 ## Status
 
-The render half works. The image builds, carries podinfo, and renders it to a Deployment and a
-Service with **no network and an empty CUE module cache** — verified in a container with
-`--network=none`, a read-only root filesystem and no kubeconfig. `task image:render` re-runs that
-proof on every `task check`.
+Both halves work for one application. The image builds, carries podinfo, and renders it to a
+Deployment and a Service with **no network and an empty CUE module cache** — verified in a
+container with `--network=none`, a read-only root filesystem and no kubeconfig. `task image:render`
+re-runs that proof on every `task check`.
 
-Nothing is applied to a cluster yet. The `Batch/Job`, the ServiceAccount and the RBAC are the next
-change.
+Run as a `Batch/Job` on a **bare** kind cluster, the same image installs the OPM CRDs from the
+manifest embedded in `opm`, applies podinfo through `opm instance apply` and waits until it is
+ready, with a measured minimum of RBAC (`deploy/rbac.yaml`) and no operator. A second run changes
+nothing and a hand-edited field is set back.
+
+A newer image upgrades what an older one installed, and puts it back when the upgrade fails. The
+image carries no history: it reads the values the cluster recorded, applies its own, and on a
+failure re-applies what it read. Measured on a bare kind cluster, both directions — exit `74`
+with podinfo back on its working tag after an upgrade to a tag that does not exist, exit `0` and
+no pod restarted on the re-run of a good one.
 
 ## The idea
 
@@ -29,27 +37,82 @@ change.
 ```
 
 The Job's arguments and environment select which bundled applications to install, into which
-namespace, with which values. Today the script renders; applying is the next change.
+namespace, with which values.
 
 ```bash
 task build                                   # build the image
 podman run --rm --network=none $IMAGE list   # what does it carry?
 podman run --rm --network=none $IMAGE render podinfo > manifests.yaml
+
+task cluster:up && task cluster:load         # bare kind cluster, image loaded into it
+task job:run                                 # apply deploy/, run the Job, print its log
+task job:logs
+
+# the same image from a host, against any cluster
+podman run --rm -v ~/.kube/config:/kc:ro -e KUBECONFIG=/kc $IMAGE apply podinfo
 ```
 
 | Variable | Meaning |
 | --- | --- |
 | `OPM_SUITE_APPS` | ordered, comma-separated; used when no application is named |
-| `OPM_SUITE_NAMESPACE` | target namespace (default `default`) |
-| `OPM_SUITE_OUT` | unset: one YAML stream on stdout. A directory: split files under `<dir>/<app>/` |
+| `OPM_SUITE_NAMESPACE` | target namespace (default `default`); the Job passes its own |
+| `OPM_SUITE_OUT` | render only. Unset: one YAML stream on stdout. A directory: split files under `<dir>/<app>/` |
+| `OPM_SUITE_TIMEOUT` | apply only. Per-application readiness bound (default `300s`) |
+| `OPM_KUBECONFIG` / `KUBECONFIG` | apply only. An explicit kubeconfig. With neither, inside a pod, one is written from the service account token |
 
 Exit codes: `0` success, `64` no or unknown subcommand, `65` an application the bundle does not
-carry, `70` a render failed.
+carry, `70` a render failed, `71` the CRD bootstrap failed, `72` an apply failed, `73` an
+application was applied but not ready in time, `74` an upgrade failed and the previous values
+came back, `75` an upgrade failed and the revert failed too, `76` a `pre-apply` hook refused.
+
+`apply` installs only the CRDs, never the operator: a bundled module is always CLI-owned (see
+`FINDINGS.md`), so the Job applies and keeps ownership, and nothing reconciles after it exits.
+
+`list` and the first line of every `apply` print the suite version, which is the image tag
+`task build` was given. Nothing compares it against anything; it exists so a log says which
+release did what.
+
+## An upgrade is a values change
+
+There is no `upgrade` verb. Between two suite releases a bundled application's `values.cue`
+changes — an image tag, a replica count — and re-running `apply` with the newer image is the
+upgrade. The module CUE is expected to stay put: `opm` records an instance's values on the
+cluster, and a revert replays them, so values that no longer unify with a changed module make
+their own revert fail (exit `75`, with the module named).
+
+Before applying an application that is already installed, `apply` reads `spec.values` off its
+`ModuleInstance` — the values the last apply consumed. If the new values fail to apply, or the
+application is not ready within `OPM_SUITE_TIMEOUT`, the captured values go back on and the wait
+runs again. The run stops there either way: `74` when the application came back, `75` when it did
+not. A first install has nothing to revert to and still fails with `72`/`73`.
+
+Readiness is **not** `opm instance status` alone. That command judges a Deployment by its
+`Available` condition, which an upgrade to an unpullable image never clears, because the old pod
+keeps serving — it reports `Ready` forever. So after `opm` agrees, each Deployment the instance
+owns is checked for a finished rollout. See `FINDINGS.md` for which number actually catches it.
+
+### Hooks
+
+Two optional files per application, plain bash, neither needing an execute bit:
+
+| File | When | On non-zero |
+| --- | --- | --- |
+| `bundle/instances/<app>/pre-apply` | before the apply | the run stops, exit `76`, nothing applied |
+| `bundle/instances/<app>/on-failure` | after a failed upgrade, before the revert | logged, the revert happens anyway |
+
+`on-failure` runs while the failed version is still installed, which is where a database restore
+belongs: the revert then brings back a version that expects the restored state.
+
+Both receive `OPM_SUITE_APP`, `OPM_SUITE_NAMESPACE`, `OPM_SUITE_KUBECONFIG` (the path `opm` is
+using), `OPM_SUITE_WORK` (the working copy) and `OPM_SUITE_PREVIOUS_VALUES` — the path of a JSON
+file holding the captured values, empty on a first install. Everything a hook prints goes to
+stderr under the application's name; stdout belongs to `render`. `task lint` shellchecks them.
+podinfo ships a `pre-apply` that prints the tag it is upgrading from and nothing else, so the
+hook path is exercised on every run.
 
 ## Process flow
 
-Four views of the same pipeline. The first three describe what exists today. The fourth is the
-proposed `apply` path from the `apply-bundled-suite` OpenSpec change and is not implemented.
+Four views of the same pipeline.
 
 ### Lifecycle: from pins to a checked image to a bare cluster
 
@@ -66,7 +129,7 @@ flowchart LR
   subgraph cluster["kind cluster (bare on purpose)"]
     up["task cluster:up<br/>no CRDs, no operator, no Platform"] --> load["task cluster:load"]
     img -.-> load
-    load --> job["Batch/Job runs the image<br/>(apply: proposed, see below)"]
+    load --> job["task job:run<br/>Batch/Job runs the image: apply"]
   end
 ```
 
@@ -113,29 +176,37 @@ flowchart LR
   reg[("GHCR / registry.cue.works")] -. "never at runtime:<br/>image sets no CUE_REGISTRY,<br/>a fetch fails loudly" .-> vendor
 ```
 
-### Proposed: `opm-suite apply` as a Job
-
-Not implemented. This is the shape the `apply-bundled-suite` change proposes.
+### `opm-suite apply` as a Job
 
 ```mermaid
 sequenceDiagram
   participant K as kube-apiserver
   participant J as Job pod (opm-suite apply)
   participant O as opm CLI
-  Note over J,O: proposal only. Nothing below exists in scripts/opm-suite yet
-  J->>J: no kubeconfig? write one from the mounted SA token
+  J->>J: select + validate apps, stage the working copy (same prelude as render)
+  J->>J: no kubeconfig? write one from the mounted SA token (tokenFile)
   J->>O: opm operator install --crds-only
-  O->>K: create ModuleInstance CRD (no operator, no seeded Platform)
+  O->>K: SSA the three embedded CRDs, wait Established<br/>(no operator, no seeded Platform); fail = exit 71
   loop each app, in order
-    J->>J: render into working copy (same path as render)
-    J->>O: opm instance apply --platform /opt/opm/platform
-    O->>K: server-side apply manifests + ModuleInstance CR<br/>(source: local, so CLI-owned: no reconcile, no drift fix)
-    loop until ready or timeout
-      J->>O: opm instance status
-      O->>K: read resource status
+    J->>K: GET moduleinstances/app<br/>404 = first install; spec.values = what a revert would restore
+    J->>J: pre-apply hook, if present; non-zero = exit 76, nothing applied
+    J->>O: opm instance apply instance.cue --platform (working copy)
+    O->>K: server-side apply manifests + ModuleInstance CR<br/>(source: local, so CLI-owned: no reconcile after exit)
+    loop every 5s until ready or OPM_SUITE_TIMEOUT
+      J->>O: opm instance status app -n ns
+      J->>K: GET each inventory Deployment<br/>observed>=generation, updated==desired,<br/>available==desired, total==updated
+    end
+    alt ready
+      J->>J: on to the next app
+    else failed, nothing captured
+      J->>J: exit 72 (apply) or 73 (timeout), as before
+    else failed, values captured
+      J->>J: on-failure hook, if present (status logged, revert happens anyway)
+      J->>O: opm instance apply, values.cue = the captured JSON
+      J->>J: wait again: exit 74 if it came back, 75 if it did not
     end
   end
-  J-->>K: exit 0, or new codes for CRD fail / apply fail / timeout
+  J-->>K: exit 0
 ```
 
 ## What this is testing
@@ -184,6 +255,8 @@ and records the exact versions in `vendor/VERSIONS`.
 | `platform/` | The baked `#Platform`, passed to every render as `--platform` |
 | `vendor/` | Committed source of every CUE dependency, plus `VERSIONS` |
 | `scripts/opm-suite` | The entrypoint |
+| `bundle/instances/<app>/pre-apply`, `on-failure` | The optional per-application hooks |
+| `deploy/` | Namespace, ServiceAccount, the measured RBAC and the Job that runs the image |
 | `hack/` | The kind cluster config and the `vendor:sync` / `image:render` scripts |
 | `Containerfile` | The image: pinned `opm`, the entrypoint, and all of the above |
 | `FINDINGS.md` | What the experiment taught us, negative results included |

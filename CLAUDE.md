@@ -137,11 +137,36 @@ snapshots of a moving codebase, not a contract.
   the server-side apply itself and keeps ownership: no operator reconcile loop, no drift
   correction after the Job exits.
 - **The Job's ServiceAccount needs RBAC for every kind any bundled module renders**, plus the
-  `ModuleInstance` CR it writes as inventory.
+  `ModuleInstance` CR it writes as inventory. Measured for podinfo (2026-09-22, `deploy/rbac.yaml`):
+  `get/create/patch` per rendered kind and on `moduleinstances`, `patch` on
+  `moduleinstances/status`, `get/create/patch` on CRDs cluster-wide, `pods list` for
+  `--details`. No `delete` yet: nothing has pruned. See `FINDINGS.md`.
 - **`opm instance apply` requires the `ModuleInstance` CRD to already exist.** It fails fast
-  with a hint when it is missing. On a bare cluster the image must therefore install the CRDs
-  itself before applying anything: `opm operator install --crds-only` for the CLI-owned path,
-  or a full `opm operator install` if a later change wants a reconciling operator.
+  with a hint when it is missing. On a bare cluster the image therefore installs the CRDs
+  itself before applying anything: `opm operator install --crds-only`, which is fully embedded
+  in the binary and needs no network beyond the API server (verified 2026-09-22).
+- **`opm` has no in-cluster kubeconfig fallback** (cli#227). In a pod with no kubeconfig
+  configured, `apply` writes one from the service account token under `TMPDIR` and passes
+  `--kubeconfig`. `OPM_KUBECONFIG` or `KUBECONFIG`, when set, win.
+- **`opm instance apply` does not wait for CLI-owned instances** (cli#228); `apply` polls
+  `opm instance status` instead. That signal is sound for a first install and **wrong for a
+  broken rollout**: Deployment health is the `Available` condition alone, so an upgrade to a
+  bad image stays "Ready". The entrypoint therefore requires a finished rollout on top of it,
+  read off each inventory Deployment. `updatedReplicas` is not the number that catches it
+  (measured: `desired=1 updated=1 available=1 total=2` on a wedged rollout);
+  `status.replicas == status.updatedReplicas` is. Deployments only.
+- **`opm` records an instance's values and prints them back nowhere.** `spec.values` on the
+  `ModuleInstance` is what the last apply consumed; neither `opm instance status -o json` nor
+  `opm instance list -o json` carries it, so the entrypoint reads the CR over the API with
+  `wget` and `jq` (`GET /apis/opmodel.dev/v1alpha1/namespaces/<ns>/moduleinstances/<app>`, no
+  RBAC beyond the `get` the apply already needs). The record is the values the instance
+  *declared*, not the module's resolved config: **whatever a bundled application does not write
+  into its `values.cue` is not in the record, and is not what a failed upgrade reverts to.**
+- **An upgrade is a values change, and there is no `upgrade` verb.** Re-running `apply` from a
+  newer image is the upgrade; a failed one re-applies the captured JSON as `values.cue` (JSON is
+  CUE) and waits again. A module that moved between two releases can make its own revert fail at
+  render, which is exit `75`. Exit codes: `74` reverted and ready, `75` revert failed too,
+  `76` a `pre-apply` hook refused.
 - **A full `opm operator install` also seeds a cluster `Platform` that is currently broken**
   (see `FINDINGS.md`). `--crds-only`, or `--skip-platform`, avoids seeding it.
 - **Platform precedence is `--platform <dir>` > cluster `Platform` CR > `~/.opm/platform/`**
@@ -188,7 +213,8 @@ Target shape. Directories appear as the OpenSpec changes that create them land.
 | `platform/` | The baked `#Platform` module passed as `--platform` |
 | `vendor/` | Committed CUE source of every dependency, plus the `VERSIONS` manifest |
 | `scripts/` | The bash entrypoint and its helpers |
-| `deploy/` | Job, ServiceAccount and RBAC manifests (not created yet) |
+| `bundle/instances/<app>/pre-apply`, `on-failure` | Optional per-application hooks, shellchecked by `task lint` |
+| `deploy/` | Namespace, ServiceAccount, the measured RBAC and the Job that runs the image |
 | `Containerfile` | The installer image build |
 | `hack/` | The kind cluster config and the `vendor:sync` / `image:render` scripts |
 | `FINDINGS.md` | What the experiment actually taught us, including the negative results |
@@ -214,9 +240,11 @@ the task, which is the one action in this repo that contacts a registry.
 | `task cluster:status` | What the test cluster is running |
 | `task cluster:load` | Load the locally built image into the cluster |
 | `task cluster:down` | Delete the test cluster |
+| `task job:run` | Apply `deploy/` to the test cluster, run the installer Job, print its log |
+| `task job:logs` | Print the installer Job's log |
 
 `CLUSTER` renames the cluster, `NODE_IMAGE` pins a Kubernetes version, `REGISTRY` overrides the
-CUE registry mapping.
+CUE registry mapping, `JOB_TIMEOUT` bounds how long `job:run` waits for the Job.
 
 ## Change Workflow
 

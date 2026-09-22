@@ -1,0 +1,72 @@
+# The Job's permissions: the first real measurement of how wide an installer
+# image's RBAC has to be for one application (D5). Every verb here was needed
+# by a run against the kind test cluster, and removing any one of them fails
+# the Job (or, for `pods list`, blanks the diagnostics on the timeout path).
+# The delta from the design's table is in FINDINGS.md.
+#
+# Not here, on purpose: `delete` on the rendered kinds. Nothing in this change
+# prunes, so no run needed it; the first change that renders a different set
+# of resources is the one that measures it.
+#
+# Cluster-scoped: only the CRDs `opm operator install --crds-only` creates.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opm-suite-installer
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: opm-suite-installer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opm-suite-installer
+subjects:
+  - kind: ServiceAccount
+    name: opm-suite-installer
+    namespace: opm-suite
+---
+# Namespaced: the ModuleInstance inventory record (its status subresource is
+# where the inventory is written), every kind the bundled modules render, and
+# the pod list `opm instance status --details` prints when a workload is not
+# ready.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opm-suite-installer
+  namespace: opm-suite
+rules:
+  - apiGroups: ["opmodel.dev"]
+    resources: ["moduleinstances"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["opmodel.dev"]
+    resources: ["moduleinstances/status"]
+    verbs: ["patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opm-suite-installer
+  namespace: opm-suite
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opm-suite-installer
+subjects:
+  - kind: ServiceAccount
+    name: opm-suite-installer
+    namespace: opm-suite

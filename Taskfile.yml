@@ -16,6 +16,8 @@ vars:
   # Empty means kind's own default node image. Override to pin a Kubernetes
   # version: NODE_IMAGE=kindest/node:v1.34.0
   NODE_IMAGE: '{{.NODE_IMAGE | default ""}}'
+  # Seconds to wait for the installer Job to finish in task job:run.
+  JOB_TIMEOUT: '{{.JOB_TIMEOUT | default "420"}}'
 
 tasks:
   default:
@@ -24,13 +26,14 @@ tasks:
       - task --list
 
   lint:
-    desc: Shellcheck every script
+    desc: Shellcheck every script, the per-application hooks included
     cmds:
       - |
         set -euo pipefail
-        files=$(find . -path ./.git -prune -o -type f -name '*.sh' -print \
-                -o -path ./.git -prune -o -type f -path './scripts/*' ! -name '*.md' -print \
-                | sort -u)
+        files=$(find . -path ./.git -prune -o -type f \
+                  \( -name '*.sh' -o -path './scripts/*' \
+                     -o -name 'pre-apply' -o -name 'on-failure' \) \
+                  ! -name '*.md' -print | sort -u)
         if [ -z "$files" ]; then echo "no scripts yet"; exit 0; fi
         echo "$files" | xargs shellcheck -x
 
@@ -48,7 +51,7 @@ tasks:
           echo "no Containerfile yet; nothing to build"
           exit 0
         fi
-        podman build -t '{{.IMAGE}}:{{.TAG}}' .
+        podman build --build-arg SUITE_VERSION='{{.TAG}}' -t '{{.IMAGE}}:{{.TAG}}' .
 
   image:render:
     desc: Prove the built image still renders offline (no network, empty CUE cache)
@@ -61,6 +64,61 @@ tasks:
       - task: lint
       - task: build
       - task: image:render
+
+  # The cluster half of the experiment. deploy/ is applied with host-side
+  # kubectl, which is allowed: the image is the thing under test, the host is
+  # not. Nothing here prepares the cluster for the image; the Job bootstraps
+  # the CRDs itself.
+  job:run:
+    desc: Run the installer Job on the test cluster and print its log
+    silent: true
+    cmds:
+      - |
+        set -euo pipefail
+        ctx='kind-{{.CLUSTER}}'
+        # Refuse when the image is not loaded: imagePullPolicy is Never, so a
+        # missing image fails slowly as ErrImageNeverPull instead of at once.
+        if ! docker exec '{{.CLUSTER}}-control-plane' crictl images -q '{{.IMAGE}}:{{.TAG}}' 2>/dev/null | grep -q .; then
+          echo "REFUSING: {{.IMAGE}}:{{.TAG}} is not loaded into cluster '{{.CLUSTER}}'." >&2
+          echo "Run 'task build' then 'task cluster:load' first." >&2
+          exit 1
+        fi
+        # A re-run is one command: the previous Job goes first, so each run
+        # has exactly one pod and one log.
+        kubectl --context "$ctx" delete job opm-suite-installer -n opm-suite --ignore-not-found --wait=true
+        kubectl --context "$ctx" apply -f deploy/namespace.yaml -f deploy/serviceaccount.yaml -f deploy/rbac.yaml
+        kubectl --context "$ctx" apply -f deploy/job.yaml
+        echo
+        echo "waiting for the Job to finish (timeout {{.JOB_TIMEOUT}})"
+        deadline=$(( $(date +%s) + {{.JOB_TIMEOUT}} ))
+        result=""
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+          s=$(kubectl --context "$ctx" get job opm-suite-installer -n opm-suite \
+                -o jsonpath='{.status.succeeded}/{.status.failed}')
+          case "$s" in
+            1/*) result=complete; break ;;
+            */1) result=failed; break ;;
+          esac
+          sleep 2
+        done
+        echo
+        echo "--- installer log ---"
+        kubectl --context "$ctx" logs -n opm-suite job/opm-suite-installer || true
+        echo "--- end of log ---"
+        echo
+        case "$result" in
+          complete) echo "Job Complete" ;;
+          failed)
+            echo "Job Failed: container exit $(kubectl --context "$ctx" get pod -n opm-suite -l batch.kubernetes.io/job-name=opm-suite-installer -o jsonpath='{.items[0].status.containerStatuses[0].state.terminated.exitCode}')" >&2
+            exit 1 ;;
+          *) echo "Job did not finish within {{.JOB_TIMEOUT}}s" >&2; exit 1 ;;
+        esac
+        kubectl --context "$ctx" get moduleinstance,deploy,svc,pods -n opm-suite
+
+  job:logs:
+    desc: Print the installer Job's log
+    cmds:
+      - kubectl --context 'kind-{{.CLUSTER}}' logs -n opm-suite job/opm-suite-installer
 
   # Deliberately bare. This task creates a stock Kubernetes cluster and stops:
   # no OPM operator, no CRDs, no Platform. Bootstrapping those is the installer

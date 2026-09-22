@@ -1,0 +1,8 @@
+# The namespace the installer Job runs in, and the namespace it installs the
+# suite into: the Job passes its own namespace as OPM_SUITE_NAMESPACE. The
+# entrypoint never creates a namespace (no --create-namespace), so that the
+# RBAC measurement below stays honest.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opm-suite

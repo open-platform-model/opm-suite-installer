@@ -7,18 +7,239 @@ more than one that confirms it.
 
 ## Open questions
 
-- How wide does the Job's RBAC have to be in practice, for a realistic suite?
+- Does the measured RBAC width for one application (below) stay proportional once a suite
+  renders more kinds, and what does pruning add? No run in this repo has pruned yet.
 - Is losing operator ownership (drift correction, reconciliation) acceptable for the use cases
   an installer image would serve? This is now the central open question, because a bundled
   module *cannot* be operator-owned at all (see the local-replacement entry below).
 - Does the image stay this small once a suite is more than one application? 2.3 MB of vendored
   CUE against a 171 MB image says the CUE half is not what costs.
 
+Answered: *how wide does the Job's RBAC have to be for one application?* Fourteen verbs, all
+but three namespaced, measured one omission at a time; see the RBAC entry below.
+
+Answered: *can an immutable image revert a failed upgrade with only what `opm` records on the
+cluster?* Yes, and the record is enough on its own — but only once the readiness signal is
+something other than `opm instance status`. See the top two entries.
+
 Answered: *does a warm `CUE_CACHE_DIR` keep `opm instance build` off the network?* It does, but
 the question stopped mattering. Vendoring makes the render offline by construction rather than by
 cache warmth, and the vendored tree is a tenth the size and reviewable in a diff.
 
 ## Entries
+
+## 2026-09-22: `updatedReplicas` is not the number that catches a stuck rollout; `replicas` is
+
+**Tried.** Upgrading the bundled podinfo from `6.7.1` to a tag that does not exist, on the kind
+cluster `opm-suite`, with `OPM_SUITE_TIMEOUT=60s`, and reading every rollout number off the
+Deployment at the moment the wait gave up.
+
+**Happened.** `opm instance status` reported `Ready`, as the entry below predicts. What is new is
+which of the Deployment's own numbers disagreed:
+
+```
+Instance: podinfo   Status: Ready   Deployment podinfo-podinfo  Ready
+  Deployment/podinfo-podinfo: desired=1 updated=1 available=1 total=2 generation=2 observed=2
+```
+
+`observedGeneration` is current, `updatedReplicas` equals the desired count, and
+`availableReplicas` equals it too. A check built from those three — which is what the entry below
+proposed — passes a rollout that is permanently wedged. The only number that gives it away is
+`status.replicas`: **2**, because the old ReplicaSet's pod is still there keeping `Available`
+true while the new pod sits in `ErrImagePull`.
+
+**Means.** The condition that actually decides "this rollout finished" is
+`status.replicas == status.updatedReplicas` — no replicas left that are not the new ones. The
+entrypoint now requires all four (`observed >= generation`, `updated == desired`,
+`available == desired`, `total == updated`) after `opm instance status` agrees, and that is what
+makes the revert fire: exit `74` measured at 61s, image back to `6.7.1`, all replicas available,
+and the `ModuleInstance` recording the working values again. The revert path's own failure was
+measured too, by upgrading one nonexistent tag to another: exit `75`, with the reverted
+instance's diagnostics on stderr. Deployments only; a StatefulSet or DaemonSet in a later bundle
+falls back to the weaker signal and would need its own arm. Sharpens what open-platform-model/cli#228 should ask for:
+`Available` alone is wrong, and `updatedReplicas` alone is also wrong.
+
+## 2026-09-22: `opm` records the values it applied and prints them back nowhere
+
+**Tried.** Finding the previous values to revert to, first through the CLI
+(`opm instance status -o json`, `opm instance list -o json`), then by reading the
+`ModuleInstance` CR from inside the Job pod with `wget` and the mounted service account token.
+
+**Happened.** `opm instance apply` writes the values into the CR's `spec.values` so a later
+ownership transfer can replay them (`cli/internal/inventory/record.go`), and nothing in the CLI
+prints them: `status -o json` carries `instanceName`, `version`, `owner`, `resources` and
+`aggregateStatus`; `list -o json` carries `module`, `version`, `status` and `lastApplied`. No
+values in either. The CR read is one request and needs no new RBAC — the `get` on
+`moduleinstances` the apply already requires covers it:
+
+```
+GET /apis/opmodel.dev/v1alpha1/namespaces/<ns>/moduleinstances/<app>
+```
+
+Two things it cost. `wget` exits `8` for every error status alike (measured for `404`;
+documented as "server issued an error response" for the rest), so `-S` and the status line are
+the only way to tell "not installed yet" from "not allowed" — the difference between a first
+install and a run that must refuse to apply blind. And lifting one object out of JSON needs
+`jq`: **1.1 MB** on a 173 MB image, from the base image's own package repository.
+
+The record is also narrower than it looks. `spec.values` is the block the instance *declared*,
+not the config the module resolved: with `values: {replicas: 1}` and the image left to the
+module's default, the CR recorded `{"replicas":1}` and the image tag was simply absent. What a
+release does not write into `values.cue` is not in the record, and so is not what a failed
+upgrade reverts to. The bundled podinfo now pins its tag explicitly for that reason.
+
+**Means.** For `cli/`: the record `opm` writes for replay has no read side. Either
+`opm instance status -o json` should carry `spec.values`, or there should be an
+`opm instance get -o json`. Until then any consumer that wants to know what it last applied
+talks to the API server itself, which is a strange thing for a CLI to push its callers into.
+
+## 2026-09-22: JSON is CUE, so the recorded values are a usable revert
+
+**Tried.** Writing the captured `spec.values` JSON straight into the working copy's `values.cue`
+as `package <pkg>` plus `values: <the JSON>`, and re-running the same `opm instance apply`.
+
+**Happened.** It renders and applies unchanged. JSON is a subset of CUE, so no translation step
+exists to get wrong, and `opm instance apply` loads `values.cue` from beside the instance file by
+default, so not one flag changes between an apply and a revert. Measured end to end: a failed
+upgrade reverted and the cluster came back to the tag it had, with the `ModuleInstance` recording
+those values again.
+
+**Means.** The revert needs no format of its own and no bookkeeping in the image. Its one
+precondition is that an upgrade is a *values* change: the captured values have to unify with the
+module this image carries, so a module that moved between two releases can make its own revert
+fail at render. That is reported (exit `75`) rather than hidden, and it is why "an upgrade is a
+values change" is a rule here and not a description.
+
+## 2026-09-22: `status.inventory.revision` counts applies, not changes
+
+**Tried.** Running the same installer image twice over an instance that was already up to date.
+
+**Happened.** `opm` printed `✔ Instance up to date` and `2 unchanged` both times, no pod was
+restarted, and the revision still went `7 -> 8`.
+
+**Means.** A higher revision is evidence that an apply happened, not that anything changed. It
+dates a run; it does not detect a drift or an upgrade. The signals that do are the inventory
+digests and the rendered objects themselves.
+
+## 2026-09-22: `opm` has no in-cluster kubeconfig fallback
+
+**Tried.** `opm instance status` inside the installer image with no kubeconfig anywhere, first
+on the host with `--network=none`, then as a pod on the kind cluster `opm-suite` with only the
+mounted service account token.
+
+**Happened.** Exit 3 both times, before any request:
+
+```
+ERRO m:podinfo: connecting to cluster error="building kubernetes config:
+  stat /root/.kube/config: no such file or directory: connectivity error"
+```
+
+`OPM_KUBECONFIG=` (empty) gives the same error; the resolver treats empty as unset. The token
+at `/var/run/secrets/kubernetes.io/serviceaccount/` is never consulted.
+
+**Means.** `opm` resolves its kubeconfig to `~/.kube/config` as an explicit path and hands it to
+client-go, which stats explicit paths. Every other Kubernetes CLI falls through to in-cluster
+config when that file is absent; `opm` does not, so it cannot run in a pod unmodified. The
+entrypoint works around it with a heredoc: when neither `OPM_KUBECONFIG` nor `KUBECONFIG` is
+set and `KUBERNETES_SERVICE_HOST` is, it writes a kubeconfig under `TMPDIR` whose user is
+`tokenFile: .../serviceaccount/token` (so a rotated projected token is read fresh) and passes
+`--kubeconfig` to every call. Verified as a Job: the same image, no kubeconfig, reaches the API
+server and installs podinfo. Reported as open-platform-model/cli#227.
+
+## 2026-09-22: `opm instance apply` has no readiness wait for CLI-owned instances, and `opm instance status` misreads a broken rollout as ready
+
+**Tried.** `opm instance apply` on the bundled podinfo, then watching what it waits for. Then
+`opm instance status` as the wait signal, against a fresh install with a nonexistent image tag
+and against an upgrade to a nonexistent tag.
+
+**Happened.** `apply` returns as soon as the server accepts the objects: its `--timeout` bounds
+"the operator-reconcile wait (operator-managed instances only)", and a bundled instance is never
+operator-managed. `status` exits `2` while any resource is not `Ready` and `0` once all are, so
+a loop on it is the wait. On the fresh broken install that works: exit `73` after 61s with
+`OPM_SUITE_TIMEOUT=60s`, and `--details` names the `ErrImagePull` pod. On the broken *upgrade*
+it does not:
+
+```
+$ kubectl get deploy podinfo-podinfo -o jsonpath='{.status}'
+availableReplicas:1 readyReplicas:1 replicas:2 unavailableReplicas:1 updatedReplicas:1
+  Available=True (MinimumReplicasAvailable)  Progressing=True (ReplicaSetUpdated)
+$ opm instance status podinfo -n default
+Status: Ready   Deployment podinfo-podinfo  Ready
+```
+
+`cli/internal/kubernetes/health.go` judges a Deployment by its `Available` condition alone,
+which stays `True` for as long as the old ReplicaSet keeps serving, which for a rollout that
+never completes is forever.
+
+**Means.** The design's accepted risk ("briefly ready during a rollout") is understated: a
+broken upgrade is reported ready for good, not briefly. For a first install the loop is sound;
+for the upgrade change it is not a readiness signal at all, and that change has to measure
+`updatedReplicas`/`Progressing` or wait on a rollout condition instead. Two things for `cli/`:
+a `--wait` on `opm instance apply` for CLI-owned instances would delete the loop, and Deployment
+health should consider `Progressing`/`updatedReplicas`, not `Available` alone. Reported as open-platform-model/cli#228.
+
+## 2026-09-22: `--crds-only` is offline, and it is the whole bootstrap
+
+**Tried.** `opm operator install --crds-only` from the image against the bare kind cluster with
+name resolution dead (`/etc/resolv.conf` pointing at `127.0.0.1`; `getent hosts github.com`
+fails) and only the API server's IP reachable. `--network=none` first, to see what it does
+before it can reach anything.
+
+**Happened.** With no network the first and only action is a `GET` on the `moduleinstances`
+CRD, which fails with `network is unreachable`; nothing is fetched before that. With DNS dead
+and the API reachable it creates the three CRDs (`moduleinstances`, `modulepackages`,
+`platforms`), all `Established`, in about 2s, and prints `installed (embedded, 3 resource(s)
+applied)`. No Deployment, no Platform. A second run reports all three `= unchanged`.
+
+**Means.** The bootstrap is self-contained: the CRDs live in the binary, and a bare cluster
+needs nothing but its own API server to become one `opm instance apply` can target. This is
+the last piece of the "one artifact, nothing reachable" claim; the render half was proven in
+the previous change. `podman --dns none` did *not* produce a DNS-less container under pasta
+(the host's resolvers were copied in anyway); mounting a `resolv.conf` did.
+
+## 2026-09-22: the RBAC width for one application, measured
+
+**Tried.** The design's D5 table as a ClusterRole and a Role, then one Job run per omitted verb
+(and per omitted resource), first on a steady-state cluster and then with the CRDs and the
+workload deleted before each run, plus `opm instance status` run as the ServiceAccount from the
+host with individual read verbs removed. kind cluster `opm-suite`, Kubernetes v1.36.1.
+
+**Happened.** What the runs needed, and what ships in `deploy/rbac.yaml`:
+
+| Scope | Resource | Verbs |
+| --- | --- | --- |
+| cluster | `apiextensions.k8s.io/customresourcedefinitions` | get, create, patch |
+| namespace | `opmodel.dev/moduleinstances` | get, create, patch |
+| namespace | `opmodel.dev/moduleinstances/status` | patch |
+| namespace | `apps/deployments` | get, create, patch |
+| namespace | `core/services` | get, create, patch |
+| namespace | `core/pods` | list |
+
+Against the D5 guess: no `list` anywhere except pods, no `update`, no `delete`, no `events`, no
+Platform read. `create` is needed even though every write is a server-side-apply `PATCH`, because
+the API server checks `create` when the patched object does not exist yet. Three warnings
+appear on every run and change nothing:
+
+- `could not read/delete legacy inventory Secret ... cannot get/delete resource "secrets"`:
+  a pre-CRD inventory format `opm` still probes for. Granting `secrets` would silence it and
+  prove nothing.
+- `skipping operator-version ceiling check: reading the Platform was denied by RBAC`: the gate
+  the D5 table budgeted a Platform read for. Denied is a warning, so the read is not granted.
+- Without `moduleinstances/status`, apply fails clearly: `cannot record inventory: patching
+  moduleinstances/status is denied ... grant the moduleinstances/status subresource`.
+
+Two things `opm instance status` does with a denied read. Without `get` on the workload kinds
+it fails with exit `5`, `no resources found for instance`, rather than reporting ready, so a
+too-narrow Role fails the wait instead of fooling it. Without `pods list`, `--details` prints the
+resource table and no pod lines, silently; `events` is never read.
+
+**Means.** Fourteen verbs, three of them cluster-scoped, for one application: narrow enough to
+ship as a Role plus a two-line ClusterRole, and every one of them earned by a Forbidden. The
+open question is now about scale, not shape: each new rendered kind adds a namespaced
+`get/create/patch` triple, and the first render that drops a resource will need `delete` for
+pruning, which no run here exercised. The Job runs as a non-root user with a read-only root
+filesystem and all capabilities dropped; `opm` needed only `TMPDIR` and `HOME` pointed at the
+`emptyDir`.
 
 ## 2026-09-22: a fully vendored bundle renders with no network and an empty cache
 

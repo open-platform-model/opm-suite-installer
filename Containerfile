@@ -22,9 +22,13 @@ ARG OPM_SHA256_ARM64=4c636f838229c8c1907e555050d3c27f9915e14bffdfb9d2158aba4bf19
 # `podman build .` on amd64 works with no arguments.
 ARG TARGETARCH=amd64
 
+# `jq` alongside `wget` (D1): the previous values the entrypoint reverts to are
+# JSON inside the ModuleInstance CR, and bash has no honest way to lift one
+# object out of JSON. Both come from the base image's own package repository,
+# which is what the constitution's "the base image's own tools" is read to mean.
 RUN set -eu; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates wget; \
+    apt-get install -y --no-install-recommends ca-certificates wget jq; \
     rm -rf /var/lib/apt/lists/*; \
     case "$TARGETARCH" in \
       amd64) sha="$OPM_SHA256_AMD64" ;; \
@@ -51,6 +55,13 @@ COPY bundle/   /opt/opm/bundle/
 COPY modules/  /opt/opm/modules/
 COPY platform/ /opt/opm/platform/
 COPY vendor/   /opt/opm/vendor/
+
+# The suite version, as a file beside the bundle (D5). The image applies what
+# it carries and compares nothing: this exists so a Job log can be matched to
+# the release that produced it. `task build` passes TAG; a plain
+# `podman build .` gets "dev".
+ARG SUITE_VERSION=dev
+RUN printf '%s\n' "$SUITE_VERSION" >/opt/opm/VERSION
 
 # The entrypoint. As a Batch/Job this makes the job's `args` the subcommand and
 # its applications: args: ["render", "podinfo"]. `opm` itself stays reachable

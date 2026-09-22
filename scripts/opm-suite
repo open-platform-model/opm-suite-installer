@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
-# opm-suite — render the applications bundled in this image to Kubernetes
-# manifests.
+# opm-suite — render or apply the applications bundled in this image.
 #
 # This script orchestrates `opm` and does nothing else. It never parses or
-# rewrites rendered manifests, never reimplements render or validation, and
-# never suppresses what `opm` says: the "local replacement in effect" warnings
-# are the offline mechanism announcing itself and belong on stderr where a
-# reader can see them.
+# rewrites rendered manifests, never reimplements render, validation or apply,
+# and never suppresses what `opm` says: the "local replacement in effect"
+# warnings are the offline mechanism announcing itself and belong on stderr
+# where a reader can see them.
 #
-# Nothing here contacts a cluster or a registry. Rendering needs no kubeconfig,
-# no service account token and no Platform object.
+# `render` contacts nothing: no cluster, no registry, no kubeconfig. `apply`
+# contacts exactly one thing, the API server of the target cluster, and still
+# no registry: the CRDs it installs are embedded in the `opm` binary and the
+# modules it applies are bundled beside it.
 set -euo pipefail
 
 readonly EX_OK=0
 readonly EX_USAGE=64      # no subcommand, or one that is not recognised
 readonly EX_NOAPP=65      # an application the bundle does not carry
 readonly EX_RENDER=70     # a render failed
+readonly EX_CRDS=71       # the CRD bootstrap failed; no application was touched
+readonly EX_APPLY=72      # opm instance apply failed for an application
+readonly EX_TIMEOUT=73    # applied, but not ready within OPM_SUITE_TIMEOUT
+readonly EX_REVERTED=74   # an upgrade failed and the previous values came back
+readonly EX_REVERT=75     # an upgrade failed and the revert failed too
+readonly EX_HOOK=76       # a pre-apply hook refused; nothing was applied
 
-# The render working directory, global because the EXIT trap outlives the
-# function that creates it: a `local` here leaves the trap dereferencing an
-# unbound variable under `set -u`, which turns every successful render into
-# exit 1.
+# The working directory, global because the EXIT trap outlives the function
+# that creates it: a `local` here leaves the trap dereferencing an unbound
+# variable under `set -u`, which turns every successful run into exit 1.
 WORK=""
 
 # shellcheck disable=SC2329  # invoked by the EXIT trap below
@@ -36,31 +42,68 @@ BUNDLE="${OPM_SUITE_BUNDLE:-/opt/opm/bundle}"
 PLATFORM="${OPM_SUITE_PLATFORM:-/opt/opm/platform}"
 NAMESPACE="${OPM_SUITE_NAMESPACE:-default}"
 OUT="${OPM_SUITE_OUT:-}"
+TIMEOUT="${OPM_SUITE_TIMEOUT:-300s}"
+
+# Where the mounted service account credentials live in any pod (D1).
+readonly SA_DIR=/var/run/secrets/kubernetes.io/serviceaccount
+
+# The ModuleInstance API, read off the CRD this image's pinned `opm` installs
+# (`kubectl get crd moduleinstances.opmodel.dev`: group opmodel.dev, one served
+# version v1alpha1, storage). It moves only when the `opm` pin moves, so it is
+# a literal here rather than a lookup on every run.
+readonly MI_API=opmodel.dev/v1alpha1
+
+# The suite version this image was built with (D5): a file beside the bundle,
+# written by the Containerfile from the build's TAG. Nothing anywhere compares
+# it against anything. It exists so a Job log says which release did what.
+suite_version() {
+	local f
+	f="$(dirname "$BUNDLE")/VERSION"
+	if [ -r "$f" ]; then
+		tr -d "[:space:]" <"$f"
+		echo
+	else
+		echo "unknown"
+	fi
+}
 
 usage() {
 	cat >&2 <<'EOF'
-opm-suite — render the OPM applications bundled in this image
+opm-suite — render or apply the OPM applications bundled in this image
 
 Usage:
   opm-suite render [app...]   render bundled applications to manifests
+  opm-suite apply [app...]    install the CRDs, then apply and wait for each
+                              application, in order, on the target cluster
   opm-suite list              list the bundled applications and the opm version
 
-With no application named, render reads the ordered, comma-separated list in
-OPM_SUITE_APPS. With neither, it renders every bundled application.
+With no application named, render and apply read the ordered, comma-separated
+list in OPM_SUITE_APPS. With neither, they take every bundled application.
 
 Environment:
   OPM_SUITE_APPS        ordered, comma-separated; used when no app is named
   OPM_SUITE_NAMESPACE   target namespace (default: default)
-  OPM_SUITE_OUT         unset: one YAML stream on stdout.
+  OPM_SUITE_OUT         render only. Unset: one YAML stream on stdout.
                         A directory: split files under <dir>/<app>/
+  OPM_SUITE_TIMEOUT     apply only. Per-application readiness bound; seconds,
+                        or a number with an s/m/h suffix (default: 300s)
+  OPM_KUBECONFIG        apply only. An explicit kubeconfig. KUBECONFIG is
+                        honoured too. With neither, inside a pod, one is
+                        written from the mounted service account token.
   OPM_SUITE_BUNDLE      the bundle module (default: /opt/opm/bundle)
   OPM_SUITE_PLATFORM    the platform module (default: /opt/opm/platform)
 
 Exit codes:
   0   success
-  64  no subcommand, or one that is not recognised
+  64  no subcommand, one that is not recognised, or a bad namespace/timeout
   65  an application the bundle does not carry
   70  a render failed
+  71  the CRD bootstrap failed; no application was applied
+  72  opm instance apply failed for an application; later ones were not applied
+  73  an application was applied but not ready within OPM_SUITE_TIMEOUT
+  74  an upgrade failed and the previous values were applied again successfully
+  75  an upgrade failed and the revert failed too
+  76  a pre-apply hook refused; that application was not applied
 EOF
 }
 
@@ -76,13 +119,14 @@ bundled_apps() {
 
 cmd_list() {
 	local app
+	echo "suite version: $(suite_version)"
 	for app in $(bundled_apps); do
 		echo "$app"
 	done
 	opm version
 }
 
-# Resolve which applications to render: positional arguments first, then
+# Resolve which applications to act on: positional arguments first, then
 # OPM_SUITE_APPS, then everything. Duplicates collapse to their first position.
 select_apps() {
 	local -a requested=()
@@ -114,8 +158,9 @@ select_apps() {
 	printf '%s\n' "${seen[@]-}"
 }
 
-# Validate the whole selection before rendering anything, so an unknown name
-# in last position cannot leave the earlier applications already rendered.
+# Validate the whole selection before touching anything, so an unknown name
+# in last position cannot leave the earlier applications already rendered or,
+# worse, already applied.
 validate_apps() {
 	local app
 	for app in "$@"; do
@@ -128,14 +173,20 @@ validate_apps() {
 	done
 }
 
-cmd_render() {
-	local -a apps
-	mapfile -t apps < <(select_apps "$@")
-	if [ "${#apps[@]}" -eq 0 ]; then
+# The prelude render and apply share verbatim: select and validate the
+# applications, check the namespace, stage the working copy and write the
+# generated namespace file into every selected instance package. Leaves the
+# selection in APPS and the staged module paths in W_BUNDLE and W_PLATFORM.
+APPS=()
+W_BUNDLE=""
+W_PLATFORM=""
+prepare() {
+	mapfile -t APPS < <(select_apps "$@")
+	if [ "${#APPS[@]}" -eq 0 ]; then
 		echo "opm-suite: this image carries no bundled applications" >&2
 		exit "$EX_NOAPP"
 	fi
-	validate_apps "${apps[@]}"
+	validate_apps "${APPS[@]}"
 
 	# The namespace is written into generated CUE, so it has to be a namespace
 	# and not an arbitrary string.
@@ -153,11 +204,10 @@ cmd_render() {
 	WORK=$(mktemp -d "${TMPDIR:-/tmp}/opm-suite-XXXXXX")
 	cp -r "$(dirname "$BUNDLE")"/. "$WORK/"
 
-	local bundle platform
-	bundle="$WORK/$(basename "$BUNDLE")"
-	platform="$WORK/$(basename "$PLATFORM")"
+	W_BUNDLE="$WORK/$(basename "$BUNDLE")"
+	W_PLATFORM="$WORK/$(basename "$PLATFORM")"
 	# A platform from outside the bundle tree is used where it stands.
-	[ -d "$platform" ] || platform="$PLATFORM"
+	[ -d "$W_PLATFORM" ] || W_PLATFORM="$PLATFORM"
 
 	# The CUE module cache needs somewhere writable. An externally supplied one
 	# is honoured on purpose: it is how the offline claim is checked from
@@ -166,26 +216,59 @@ cmd_render() {
 	export CUE_CACHE_DIR="${CUE_CACHE_DIR:-$WORK/cue-cache}"
 	mkdir -p "$CUE_CACHE_DIR"
 
-	[ -n "$OUT" ] && mkdir -p "$OUT"
-
-	local app pkg first=1
-	for app in "${apps[@]}"; do
+	local app pkg
+	for app in "${APPS[@]}"; do
 		# The generated file joins the instance's CUE package, whose name is
 		# not required to match the directory name.
 		pkg=$(sed -n 's/^package \([a-zA-Z_][a-zA-Z0-9_]*\).*/\1/p' \
-			"$bundle/instances/$app/instance.cue" | head -1)
+			"$W_BUNDLE/instances/$app/instance.cue" | head -1)
 		if [ -z "$pkg" ]; then
 			echo "opm-suite: $app has no CUE package clause in instance.cue" >&2
 			exit "$EX_RENDER"
 		fi
 		printf 'package %s\n\nmetadata: namespace: "%s"\n' "$pkg" "$NAMESPACE" \
-			>"$bundle/instances/$app/zz-generated-namespace.cue"
+			>"$W_BUNDLE/instances/$app/zz-generated-namespace.cue"
+	done
+}
 
+# The optional per-application hooks (D3). Two files, no framework:
+#
+#   bundle/instances/<app>/pre-apply    runs before the apply; non-zero aborts
+#   bundle/instances/<app>/on-failure   runs after a failed upgrade, before the
+#                                       built-in revert
+#
+# Run with `bash` so neither file needs an execute bit in git, and out of the
+# working copy so a hook can scribble beside the instance it belongs to.
+# Everything a hook prints goes to stderr under the application's name: stdout
+# is the manifest channel for `render` and nothing else may write there.
+run_hook() {
+	local app="$1" name="$2" hook status=0
+	hook="$W_BUNDLE/instances/$app/$name"
+	[ -f "$hook" ] || return 0
+
+	echo "opm-suite: running $app's $name hook" >&2
+	# pipefail is set, so the pipeline's status is the hook's, not sed's.
+	OPM_SUITE_APP="$app" \
+		OPM_SUITE_NAMESPACE="$NAMESPACE" \
+		OPM_SUITE_KUBECONFIG="$KC_PATH" \
+		OPM_SUITE_PREVIOUS_VALUES="$PREVIOUS" \
+		OPM_SUITE_WORK="$WORK" \
+		bash "$hook" 2>&1 | sed "s/^/$app: /" >&2 || status=$?
+	return "$status"
+}
+
+cmd_render() {
+	prepare "$@"
+
+	[ -n "$OUT" ] && mkdir -p "$OUT"
+
+	local app first=1
+	for app in "${APPS[@]}"; do
 		echo "opm-suite: rendering $app into namespace $NAMESPACE" >&2
 		if [ -n "$OUT" ]; then
 			mkdir -p "$OUT/$app"
-			if ! opm instance build "$bundle/instances/$app/instance.cue" \
-				--platform "$platform" --split --out-dir "$OUT/$app"; then
+			if ! opm instance build "$W_BUNDLE/instances/$app/instance.cue" \
+				--platform "$W_PLATFORM" --split --out-dir "$OUT/$app"; then
 				echo "opm-suite: render failed for $app" >&2
 				exit "$EX_RENDER"
 			fi
@@ -195,13 +278,337 @@ cmd_render() {
 			# separator, so one is needed between applications or the last
 			# document of one would merge into the first of the next.
 			[ "$first" -eq 1 ] || echo "---"
-			if ! opm instance build "$bundle/instances/$app/instance.cue" \
-				--platform "$platform"; then
+			if ! opm instance build "$W_BUNDLE/instances/$app/instance.cue" \
+				--platform "$W_PLATFORM"; then
 				echo "opm-suite: render failed for $app" >&2
 				exit "$EX_RENDER"
 			fi
 		fi
 		first=0
+	done
+}
+
+# OPM_SUITE_TIMEOUT in seconds. Accepts a bare number or one with an s, m or h
+# suffix; anything else is a usage error, because a silently misread bound is
+# worse than none.
+timeout_seconds() {
+	case "$TIMEOUT" in
+	*[!0-9smh]* | "" | [smh]* | *[smh]?*) return 1 ;;
+	*s) echo "${TIMEOUT%s}" ;;
+	*m) echo "$((${TIMEOUT%m} * 60))" ;;
+	*h) echo "$((${TIMEOUT%h} * 3600))" ;;
+	*) echo "$TIMEOUT" ;;
+	esac
+}
+
+# The kubeconfig `opm` is told to use, as --kubeconfig arguments, in KC_ARGS.
+#
+# `opm` has no in-cluster fallback (D1): it resolves the kubeconfig to
+# ~/.kube/config as an explicit path and fails when the file is absent, so a
+# pod's mounted service account token is never picked up on its own. When
+# nothing names a kubeconfig and the pod environment is present, one is
+# written from that token. `tokenFile` rather than an inlined token, so a
+# rotated projected token is read fresh on every call.
+KC_ARGS=()
+# The path in KC_ARGS, for the hook environment; empty when `opm` was left to
+# its own default. IN_CLUSTER is 1 only when this run talks to the cluster it
+# is running in, through the mounted service account: that is the one case
+# where the direct API reads below are aimed at the same cluster `opm` is.
+KC_PATH=""
+IN_CLUSTER=0
+resolve_kubeconfig() {
+	local explicit="${OPM_KUBECONFIG:-${KUBECONFIG:-}}"
+	if [ -n "$explicit" ]; then
+		KC_ARGS=(--kubeconfig "$explicit")
+		KC_PATH="$explicit"
+		echo "opm-suite: using kubeconfig $explicit" >&2
+		return 0
+	fi
+	if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ ! -r "$SA_DIR/token" ]; then
+		# Not in a pod: leave `opm` to its own defaults, so a developer host
+		# with ~/.kube/config keeps working.
+		return 0
+	fi
+	local kc="$WORK/kubeconfig"
+	cat >"$kc" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+- name: in-cluster
+  cluster:
+    server: https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT:-443}
+    certificate-authority: ${SA_DIR}/ca.crt
+users:
+- name: sa
+  user:
+    tokenFile: ${SA_DIR}/token
+contexts:
+- name: in-cluster
+  context:
+    cluster: in-cluster
+    user: sa
+current-context: in-cluster
+EOF
+	KC_ARGS=(--kubeconfig "$kc")
+	KC_PATH="$kc"
+	IN_CLUSTER=1
+	echo "opm-suite: in a pod with no kubeconfig; using the service account token" >&2
+}
+
+# One GET against the API server of the cluster this pod runs in, with the
+# mounted service account token (D1). Body to stdout; the response headers to
+# $WORK/api.headers, because wget exits 8 for every HTTP status alike and the
+# status line is the only way to tell "not installed yet" from "not allowed".
+api_get() {
+	wget -S -q -O - \
+		--ca-certificate="$SA_DIR/ca.crt" \
+		--header="Authorization: Bearer $(cat "$SA_DIR/token")" \
+		"https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT:-443}$1" \
+		2>"$WORK/api.headers"
+}
+
+# The values the cluster records for an application, captured before an apply
+# that may have to be undone (D1). `opm instance apply` writes them to the CR's
+# spec.values so a later ownership transfer can replay them, and then prints
+# them back nowhere: neither `opm instance status -o json` nor
+# `opm instance list -o json` carries values. So this reads the CR itself.
+#
+# Leaves the captured JSON in PREVIOUS, or PREVIOUS empty when there is
+# nothing to revert to: a first install, or a run that cannot see the record.
+PREVIOUS=""
+capture_previous() {
+	local app="$1"
+	PREVIOUS=""
+
+	if [ "$IN_CLUSTER" -ne 1 ]; then
+		# Reading the CR through an arbitrary kubeconfig means parsing one in
+		# bash, which is more than the capture is worth: the Job is the thing
+		# under test. Say so rather than silently not reverting.
+		echo "opm-suite: no in-cluster service account; not capturing $app's current values" >&2
+		echo "opm-suite: a failed upgrade of $app will NOT be reverted" >&2
+		return 0
+	fi
+
+	local cr="$WORK/$app.cr.json"
+	if ! api_get "/apis/$MI_API/namespaces/$NAMESPACE/moduleinstances/$app" >"$cr"; then
+		if grep -qE 'HTTP/[0-9.]+ 404' "$WORK/api.headers"; then
+			echo "opm-suite: $app has no ModuleInstance in $NAMESPACE yet; this is a first install" >&2
+			return 0
+		fi
+		echo "opm-suite: could not read the $app ModuleInstance; refusing to apply blind" >&2
+		sed 's/^/  /' "$WORK/api.headers" >&2
+		exit "$EX_APPLY"
+	fi
+
+	local values="$WORK/$app.previous.json"
+	if ! jq -e -c '.spec.values' <"$cr" >"$values"; then
+		echo "opm-suite: the $app ModuleInstance records no spec.values; nothing to revert to" >&2
+		return 0
+	fi
+	PREVIOUS="$values"
+	echo "opm-suite: $app is installed; captured its current values: $(cat "$values")" >&2
+}
+
+# The names of the Deployments an instance owns, from its inventory. Leaves
+# the CR in $WORK so rollout_report can reuse it.
+instance_deployments() {
+	local app="$1"
+	local cr="$WORK/$app.rollout.cr.json"
+	api_get "/apis/$MI_API/namespaces/$NAMESPACE/moduleinstances/$app" >"$cr" || return 1
+	jq -r '.status.inventory.entries[]? | select(.kind == "Deployment") | .name' <"$cr"
+}
+
+# Has every Deployment of this instance finished rolling out?
+#
+# `opm instance status` is not enough on an upgrade. It judges a Deployment by
+# its Available condition alone, and an upgrade to an image that cannot be
+# pulled never clears it: the old ReplicaSet keeps serving, so Available stays
+# True and `opm` reports Ready forever (FINDINGS.md, cli#228). Asking `opm` for
+# a rollout it does not model would be asking for a wrong answer, so the four
+# numbers that settle it are read straight off the Deployment.
+#
+# Deployments only. A StatefulSet or DaemonSet in some later bundle falls back
+# to `opm instance status` alone and would need its own arm here.
+rollout_complete() {
+	local app="$1" name dep
+	local -a names=()
+	# Nothing to look with: take `opm`'s word for it and do not pretend
+	# otherwise. capture_previous has already said the revert is off.
+	[ "$IN_CLUSTER" -eq 1 ] || return 0
+
+	mapfile -t names < <(instance_deployments "$app") || return 1
+	for name in "${names[@]-}"; do
+		[ -n "$name" ] || continue
+		dep="$WORK/$app.deployment.$name.json"
+		api_get "/apis/apps/v1/namespaces/$NAMESPACE/deployments/$name" >"$dep" || return 1
+		# Parenthesised throughout: jq's // binds looser than its comparisons.
+		jq -e '
+			(.spec.replicas // 1) as $want
+			| (.status.observedGeneration // 0) as $observed
+			| (.metadata.generation // 0) as $generation
+			| (.status.updatedReplicas // 0) as $updated
+			| (.status.availableReplicas // 0) as $available
+			| (.status.replicas // 0) as $total
+			| ($observed >= $generation)
+			  and ($updated == $want)
+			  and ($available == $want)
+			  and ($total == $updated)
+		' <"$dep" >/dev/null || return 1
+	done
+}
+
+# The numbers behind a rollout that never finished, for the reader: exactly
+# what `opm instance status` does not print.
+rollout_report() {
+	local app="$1" name dep
+	local -a names=()
+	[ "$IN_CLUSTER" -eq 1 ] || return 0
+	[ -s "$WORK/$app.rollout.cr.json" ] || return 0
+	mapfile -t names < <(jq -r '.status.inventory.entries[]? | select(.kind == "Deployment") | .name' \
+		<"$WORK/$app.rollout.cr.json") || return 0
+	for name in "${names[@]-}"; do
+		dep="$WORK/$app.deployment.$name.json"
+		[ -n "$name" ] && [ -s "$dep" ] || continue
+		jq -r --arg n "$name" '"  Deployment/\($n): desired=\(.spec.replicas // 1)"
+			+ " updated=\(.status.updatedReplicas // 0)"
+			+ " available=\(.status.availableReplicas // 0)"
+			+ " total=\(.status.replicas // 0)"
+			+ " generation=\(.metadata.generation // 0)"
+			+ " observed=\(.status.observedGeneration // 0)"' <"$dep" >&2 || true
+	done
+}
+
+# Wait until `opm instance status` exits 0, which it does only once every
+# resource of the instance is ready (D3), AND every Deployment the instance
+# owns has actually finished rolling out. `opm instance apply` returns as soon
+# as the server has accepted the objects: its --timeout bounds the operator
+# reconcile wait, and a bundled instance is never operator-managed.
+wait_ready() {
+	local app="$1" bound="$2" deadline
+	deadline=$((SECONDS + bound))
+	until opm instance status "$app" -n "$NAMESPACE" "${KC_ARGS[@]}" >/dev/null 2>&1 \
+		&& rollout_complete "$app"; do
+		if [ "$SECONDS" -ge "$deadline" ]; then
+			echo "opm-suite: $app not ready after ${bound}s in namespace $NAMESPACE" >&2
+			# Pod-level diagnostics for the reader, on stderr; its exit
+			# status is not the point here.
+			opm instance status "$app" -n "$NAMESPACE" --details "${KC_ARGS[@]}" >&2 || true
+			rollout_report "$app"
+			return 1
+		fi
+		sleep 5
+	done
+}
+
+# Put back the values the cluster recorded before this run (D2). JSON is CUE,
+# so the captured object goes into the working copy's values.cue as it stands
+# and the same apply-and-wait runs again; `opm instance apply` loads values.cue
+# from beside the instance file, so not a flag changes.
+#
+# This is why an upgrade is defined as a values change: the captured values
+# have to unify with the module *this* image carries. If modules/<app> moved
+# between the two releases they may not, and the revert then fails at render.
+# That is reported, not hidden.
+revert() {
+	local app="$1" bound="$2" pkg
+	pkg=$(sed -n 's/^package \([a-zA-Z_][a-zA-Z0-9_]*\).*/\1/p' \
+		"$W_BUNDLE/instances/$app/instance.cue" | head -1)
+	printf 'package %s\n\nvalues: %s\n' "$pkg" "$(cat "$PREVIOUS")" \
+		>"$W_BUNDLE/instances/$app/values.cue"
+
+	echo "opm-suite: re-applying $app with the values the cluster recorded" >&2
+	if ! opm instance apply "$W_BUNDLE/instances/$app/instance.cue" \
+		--platform "$W_PLATFORM" "${KC_ARGS[@]}"; then
+		echo "opm-suite: the revert of $app failed to render or apply" >&2
+		echo "opm-suite: if modules/$app changed between these two releases, the recorded values no longer fit it" >&2
+		return 1
+	fi
+	echo "opm-suite: waiting up to ${bound}s for the reverted $app to be ready" >&2
+	wait_ready "$app" "$bound"
+}
+
+cmd_apply() {
+	echo "opm-suite: suite version $(suite_version)" >&2
+
+	local bound
+	if ! bound=$(timeout_seconds); then
+		echo "opm-suite: not a timeout: $TIMEOUT (want seconds, or a number with s/m/h)" >&2
+		exit "$EX_USAGE"
+	fi
+
+	prepare "$@"
+	resolve_kubeconfig
+
+	# Bootstrap: only the CRDs, from the manifest embedded in the pinned `opm`
+	# (D2). No operator, no seeded Platform. Server-side apply, so on a
+	# cluster that already has them this reports every CRD unchanged.
+	echo "opm-suite: installing the OPM CRDs (embedded, CRDs only)" >&2
+	if ! opm operator install --crds-only "${KC_ARGS[@]}"; then
+		echo "opm-suite: CRD bootstrap failed; no application was applied" >&2
+		exit "$EX_CRDS"
+	fi
+
+	# Strictly in order, stopping at the first failure: a later application
+	# may depend on an earlier one.
+	local app
+	for app in "${APPS[@]}"; do
+		# Before anything is changed: what does the cluster say is there now?
+		capture_previous "$app"
+
+		# A pre-apply that refuses stops the run before anything is changed,
+		# for this application and every later one.
+		if ! run_hook "$app" pre-apply; then
+			echo "opm-suite: $app's pre-apply hook refused; nothing was applied" >&2
+			exit "$EX_HOOK"
+		fi
+
+		echo "opm-suite: applying $app into namespace $NAMESPACE" >&2
+		local reason=""
+		if ! opm instance apply "$W_BUNDLE/instances/$app/instance.cue" \
+			--platform "$W_PLATFORM" "${KC_ARGS[@]}"; then
+			echo "opm-suite: apply failed for $app" >&2
+			reason=apply
+		else
+			echo "opm-suite: waiting up to ${bound}s for $app to be ready" >&2
+			wait_ready "$app" "$bound" || reason=timeout
+		fi
+
+		if [ -z "$reason" ]; then
+			echo "opm-suite: $app is ready" >&2
+			# The capture is wanted only until the apply it guards has
+			# succeeded. The working copy goes with the process.
+			continue
+		fi
+
+		if [ -z "$PREVIOUS" ]; then
+			# A first install, or a run that could not read the record:
+			# there is nothing to put back, so the codes bundle-apply
+			# specifies still describe what happened.
+			echo "opm-suite: nothing was captured for $app, so there is nothing to revert to" >&2
+			echo "opm-suite: later applications were not applied" >&2
+			if [ "$reason" = apply ]; then
+				exit "$EX_APPLY"
+			fi
+			exit "$EX_TIMEOUT"
+		fi
+
+		# An upgrade went wrong and the cluster holds a record of what was
+		# there before. The application's own on-failure hook runs first,
+		# while the failed version is still the one installed (D3): a restore
+		# belongs there, and the revert then brings back a version that
+		# expects the restored state. Its status is logged and ignored,
+		# because a revert skipped over a warning helps nobody.
+		echo "opm-suite: $app failed to upgrade; reverting to $(cat "$PREVIOUS")" >&2
+		run_hook "$app" on-failure ||
+			echo "opm-suite: $app's on-failure hook exited non-zero; reverting anyway" >&2
+
+		if revert "$app" "$bound"; then
+			echo "opm-suite: $app is back on the values it had, and ready" >&2
+			echo "opm-suite: the upgrade failed; later applications were not applied" >&2
+			exit "$EX_REVERTED"
+		fi
+		echo "opm-suite: the revert of $app failed too; it is left part-upgraded" >&2
+		exit "$EX_REVERT"
 	done
 }
 
@@ -217,6 +624,9 @@ main() {
 	case "$subcommand" in
 	render)
 		cmd_render "$@"
+		;;
+	apply)
+		cmd_apply "$@"
 		;;
 	list)
 		cmd_list
