@@ -19,9 +19,12 @@ choice here, it is the only working one.
 ## What Changes
 
 - A `Containerfile` producing an installer image: a pinned `opm` release, a bash entrypoint, the
-  bundle, a baked `#Platform` module and a pre-warmed CUE module cache.
+  bundle, a baked `#Platform` module and a vendored copy of every CUE dependency.
 - A `bundle/` CUE module that reaches its bundled modules through a `cue.mod/local-module.cue`
   directory replacement, so nothing about the bundled module is resolved from a registry.
+- `vendor/`, the committed source of `core`, both catalogs and their one third-party dependency,
+  reached by the same directory-replacement mechanism, so the image resolves nothing from a
+  registry at run time or at build time.
 - `bundle/modules/podinfo/`, a podinfo `#Module` copied from the CLI's published test fixture and
   re-identified onto a module path no registry serves, so a successful render cannot be the
   published copy in disguise.
@@ -56,11 +59,11 @@ None. This is the repo's first capability.
 - **Nothing published**: no CUE module is published under any domain. The bundle module and the
   bundled podinfo module both sit on a path no registry mapping serves, and they are always the
   main module or a directory replacement of the build.
-- **Registry at build time only**: warming the CUE cache needs GHCR while the image builds. The
-  finished image must not need it.
+- **No registry at all**: with every dependency vendored, neither running the image nor building
+  it contacts a registry. Refreshing `vendor/` does, and that is a deliberate, separate act.
 - **Needs nothing `opm` does not have.** `opm instance build --platform <dir>` covers the whole
-  render path, and CUE's own `cue.mod/local-module.cue` `replaceWith` covers local module
-  resolution.
+  render path, and CUE's own `cue.mod/local-module.cue` `replaceWith` covers every dependency,
+  first-party and third-party alike.
 
 ### Alternatives not chosen
 

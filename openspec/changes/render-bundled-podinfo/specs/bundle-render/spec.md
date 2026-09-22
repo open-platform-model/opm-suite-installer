@@ -21,6 +21,12 @@ service account token or a cluster `Platform` object to render.
 - **WHEN** the image is run with all networking disabled and asked to render `podinfo`
 - **THEN** it exits `0` and writes the podinfo manifests to stdout
 
+#### Scenario: Render with an empty module cache
+
+- **WHEN** the image is run with all networking disabled and an empty CUE module cache
+- **THEN** it exits `0` and writes the podinfo manifests to stdout
+- **AND** the cache is still empty afterwards, because nothing was fetched
+
 #### Scenario: Render on a host with no cluster
 
 - **WHEN** the image is run with no kubeconfig present and asked to render `podinfo`

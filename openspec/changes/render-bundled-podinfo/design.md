@@ -83,22 +83,52 @@ Beyond offline operation, `FINDINGS.md` (2026-09-22) records that the cluster `P
 fresh `opm operator install` seeds never becomes ready, so the baked module is currently the only
 platform source that works at all.
 
-### D4: The CUE cache is warmed at image build time
+### D4: Every dependency is vendored, not cached
 
-Dependencies are fetched while the image builds and the populated cache is carried in the final
-image, with `CUE_CACHE_DIR` pointing at it.
+Nothing is resolved from a registry, at run time or at build time. `core`, both catalogs and
+their one third-party dependency (`cue.dev/x/k8s.io`) are committed under `vendor/` as CUE
+source and reached by the same directory-replacement mechanism as the bundled module.
 
-Verified offline, in a network namespace with no routable interface (`ip -brief addr` shows only
-`lo DOWN`; `curl https://ghcr.io/v2/` fails with exit 7, connection refused):
+Verified with an **empty** cache directory, in a network namespace with no routable interface:
 
 ```
-$ unshare -rn env ... opm instance build ./bundle/instances/podinfo/instance.cue --platform ./platform
+$ CUE_CACHE_DIR=<empty dir> unshare -rn opm instance build \
+    ./bundle/instances/podinfo/instance.cue --platform ./platform
 exit=0, 80 lines of YAML
+$ du -sh <empty dir>
+0
 ```
 
-A second identical run produced byte-identical output, satisfying the determinism requirement.
+The cache stayed at zero bytes, so nothing was fetched and nothing was written. Two consecutive
+runs were byte-identical. Total vendored source is about 2.3 MB, against 35 MB for a warm cache
+of the same dependency set.
 
-**Trade-off.** Building the image needs GHCR. Only running it does not.
+**The replacements must be declared in two places, for two different reasons.**
+
+- The **platform module's** `cue.mod/local-module.cue` must name `core`, both catalogs and
+  `cue.dev/x/k8s.io`. The platform's dependency list wins the render, and `opm` says so out loud
+  when the bundle also names one: `local replacement of opmodel.dev/core@v2 in
+  bundle/cue.mod/local-module.cue is ignored: the platform names that path; redirect it in the
+  platform module's cue.mod/local-module.cue`.
+- The **bundle module's** `cue.mod/local-module.cue` must *also* name `core` and the first-party
+  catalog, despite that warning. Loading and validating the instance package happens before the
+  render module is staged, and it uses the bundle module's own view. Verified: removing those
+  two entries fails with `import failed ... instance.cue:4:2`, the `core` import, even with the
+  platform's replacements in place.
+
+That the CLI calls an entry "ignored" while removing it breaks the build is confusing, and is
+recorded as a finding rather than worked around.
+
+**Refreshing the vendor tree.** `task vendor:sync` fetches the pinned versions into the CUE cache
+and copies each one out of `<cache>/mod/extract/<module>@<version>`, which is the published
+source verbatim. A `vendor/VERSIONS` manifest records exactly what is vendored. Vendoring from a
+local working tree instead would silently ship unpublished bytes: during verification the working
+tree rendered catalog `4.4.1` where the published pin was `4.4.0`.
+
+**Alternative rejected: warming the CUE cache at image build.** It works (also verified), but it
+is offline by cache warmth rather than by construction. A dependency added later that nobody
+fetched at build time fails only in an airgapped run, the cache is 15 times larger, and its
+contents are not reviewable in a diff. Vendoring makes the dependency set visible in the repo.
 
 ### D5: Instance files carry their own values; `debugValues` does not apply
 
@@ -148,7 +178,7 @@ resolving.
     instances/podinfo/values.cue
 /opt/opm/modules/podinfo/     its own CUE module, reached by directory replacement
 /opt/opm/platform/            CUE module, the baked #Platform
-/var/cache/cue/               CUE_CACHE_DIR, warmed at build time
+/opt/opm/vendor/              core, catalogs and cue.dev/x/k8s.io as CUE source
 ```
 
 ```
@@ -186,9 +216,13 @@ changes.
 
 ## Risks / Trade-offs
 
-- **The offline proof rots silently.** A later change adds a dependency that is not in the warm
-  cache and nobody notices until an airgapped run. → `task image:render` runs the image with
-  `--network=none` and is part of `task check` once the image exists.
+- **The offline proof rots silently.** A later change adds a dependency nothing vendors and
+  nobody notices until an airgapped run. → `task image:render` runs the image with
+  `--network=none` and an empty cache, and is part of `task check` once the image exists.
+- **`vendor/` rots against upstream.** It is a committed copy that no dependency bot updates, and
+  `task deps:update` at the workspace root does not know it exists. → `vendor/VERSIONS` records
+  what is vendored and `task vendor:sync` refreshes it. Accepted: a PoC pinned to a known-good
+  dependency set is a feature, not a liability.
 - **The baked platform pins catalog versions that drift from any real cluster.** → Accepted for
   now and recorded. It is the point of comparison the cluster-facing change has to argue with.
 - **`.invalid` makes the bundled module unpublishable as-is.** → Intended. A module that could be
