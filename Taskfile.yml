@@ -1,8 +1,21 @@
 version: "3"
 
+# Canonical OPM registry mapping (workspace Registry Policy): every OPM domain
+# resolves from GHCR, anonymously. Override with REGISTRY=... if you must.
+env:
+  CUE_REGISTRY: '{{.REGISTRY}}'
+  OPM_REGISTRY: '{{.REGISTRY}}'
+
 vars:
+  REGISTRY: '{{.REGISTRY | default "opmodel.dev=ghcr.io/open-platform-model,testing.opmodel.dev=ghcr.io/open-platform-model,registry.cue.works"}}'
   IMAGE: '{{.IMAGE | default "localhost/opm-suite-installer"}}'
   TAG: '{{.TAG | default "dev"}}'
+  # kind cluster name. kubectl context becomes kind-<CLUSTER>.
+  CLUSTER: '{{.CLUSTER | default "opm-suite"}}'
+  KIND_CONFIG: hack/kind-cluster.yaml
+  # Empty means kind's own default node image. Override to pin a Kubernetes
+  # version: NODE_IMAGE=kindest/node:v1.34.0
+  NODE_IMAGE: '{{.NODE_IMAGE | default ""}}'
 
 tasks:
   default:
@@ -34,3 +47,66 @@ tasks:
     desc: Everything a change must pass
     cmds:
       - task: lint
+
+  cluster:up:
+    desc: Create the kind test cluster and install the OPM operator
+    cmds:
+      - |
+        set -euo pipefail
+        if kind get clusters 2>/dev/null | grep -qx '{{.CLUSTER}}'; then
+          echo "cluster '{{.CLUSTER}}' already exists"
+        else
+          args=(create cluster --name '{{.CLUSTER}}' --config '{{.KIND_CONFIG}}' --wait 120s)
+          if [ -n '{{.NODE_IMAGE}}' ]; then args+=(--image '{{.NODE_IMAGE}}'); fi
+          kind "${args[@]}"
+        fi
+      - task: cluster:operator
+
+  cluster:operator:
+    desc: Install the OPM operator into the kind cluster (OPERATOR=false to skip)
+    cmds:
+      - |
+        set -euo pipefail
+        if [ '{{.OPERATOR | default "true"}}' != 'true' ]; then
+          echo "OPERATOR=false; skipping operator install"
+          exit 0
+        fi
+        opm operator install --context 'kind-{{.CLUSTER}}'
+
+  cluster:load:
+    desc: Load the locally built installer image into the kind cluster
+    cmds:
+      - |
+        set -euo pipefail
+        archive=$(mktemp -t opm-suite-installer-XXXXXX.tar)
+        trap 'rm -f "$archive"' EXIT
+        podman save -o "$archive" '{{.IMAGE}}:{{.TAG}}'
+        kind load image-archive "$archive" --name '{{.CLUSTER}}'
+
+  cluster:status:
+    desc: Show what the test cluster is running
+    cmds:
+      - |
+        set -euo pipefail
+        if ! kind get clusters 2>/dev/null | grep -qx '{{.CLUSTER}}'; then
+          echo "cluster '{{.CLUSTER}}' does not exist"
+          exit 0
+        fi
+        kubectl --context 'kind-{{.CLUSTER}}' version -o yaml | grep -E 'gitVersion|^server' || true
+        echo
+        kubectl --context 'kind-{{.CLUSTER}}' get nodes
+        echo
+        kubectl --context 'kind-{{.CLUSTER}}' get crd -o name | grep opmodel.dev || echo "no OPM CRDs installed"
+        echo
+        kubectl --context 'kind-{{.CLUSTER}}' get platform,moduleinstance -A 2>/dev/null || true
+
+  cluster:down:
+    desc: Delete the kind test cluster
+    cmds:
+      - |
+        set -euo pipefail
+        if ! kind get clusters 2>/dev/null | grep -qx '{{.CLUSTER}}'; then
+          echo "cluster '{{.CLUSTER}}' does not exist; nothing to delete"
+          exit 0
+        fi
+        kind delete cluster --name '{{.CLUSTER}}'

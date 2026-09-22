@@ -55,10 +55,16 @@ context: |
   - Claims about `opm`, CUE or Kubernetes behavior are verified by running them, never inferred
     from source comments or documentation.
 
-  ## V. Assume a Cluster
+  ## V. The Test Cluster Is Disposable, Not a Demo
 
-  The repo does not provision kind, install the OPM operator, or manage CRDs. It targets a
-  cluster that already has them. `opm-kind-demo` covers that ground and is not duplicated here.
+  `task cluster:up` creates a single-node kind cluster and installs the operator;
+  `task cluster:down` deletes it. That is the whole contribution.
+  - No Flux, no SOPS, no local registry, no sample bundle, no ingress. `opm-kind-demo` owns
+    that ground and is not duplicated here.
+  - The cluster is a test fixture. Any change that makes recreating it from scratch painful, or
+    that makes a finding depend on cluster state nobody can reproduce, is out of scope.
+  - The installer image must never assume it is running on this cluster. It targets any cluster
+    with the operator and CRDs installed.
 
   ## VI. Small Batches
 

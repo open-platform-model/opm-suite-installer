@@ -118,9 +118,11 @@ away.
    reimplement render, validation or apply logic in bash.
 4. **Every non-obvious discovery gets written down.** The output of this repo is knowledge as
    much as it is an image. `FINDINGS.md` is the log.
-5. **Assume a cluster exists.** The repo does not provision kind, does not install the operator
-   and does not manage CRDs. Point it at a cluster that already has them (`opm-kind-demo`
-   covers that ground).
+5. **The test cluster is disposable, not a demo.** `task cluster:up` creates a single-node kind
+   cluster and installs the operator; `task cluster:down` deletes it. That is the whole
+   contribution: no Flux, no SOPS, no local registry, no sample bundle. `opm-kind-demo` owns
+   that ground and is not duplicated here. The installer image itself must never assume it is
+   running on this cluster.
 
 ## Standing Constraints From the OPM CLI
 
@@ -168,6 +170,7 @@ Target shape. Directories appear as the OpenSpec changes that create them land.
 | `scripts/` | The bash entrypoint and its helpers |
 | `deploy/` | Job, ServiceAccount and RBAC manifests |
 | `Containerfile` | The installer image build |
+| `hack/` | The kind cluster config the `cluster:*` tasks use |
 | `FINDINGS.md` | What the experiment actually taught us, including the negative results |
 
 ## Commands
@@ -177,6 +180,13 @@ Target shape. Directories appear as the OpenSpec changes that create them land.
 | `task lint` | `shellcheck` every script |
 | `task build` | Build the installer image |
 | `task check` | Everything a change must pass before it lands |
+| `task cluster:up` | Create the kind test cluster and install the operator |
+| `task cluster:status` | What the test cluster is running |
+| `task cluster:load` | Load the locally built image into the cluster |
+| `task cluster:down` | Delete the test cluster |
+
+`CLUSTER` renames the cluster, `NODE_IMAGE` pins a Kubernetes version, `OPERATOR=false` skips
+the operator install, `REGISTRY` overrides the CUE registry mapping.
 
 ## Change Workflow
 

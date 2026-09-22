@@ -1,0 +1,12 @@
+# Disposable kind cluster for testing the installer image.
+#
+# Single control-plane node, nothing else. The installer image is a Batch/Job
+# that talks to the API server; it needs no ingress, no registry and no extra
+# ports. Add extraPortMappings here if a bundled application ever has to be
+# reachable from the host.
+#
+# Managed by: task cluster:up / task cluster:down
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+nodes:
+  - role: control-plane

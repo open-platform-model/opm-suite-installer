@@ -38,8 +38,16 @@ channel that exists. This repo exists to find out whether the duplication buys a
 
 ## Requirements
 
-A Kubernetes cluster that already has the OPM operator and its CRDs installed. This repo does
-not provision one; see `opm-kind-demo` for that.
+Any Kubernetes cluster with the OPM operator and its CRDs installed. For a disposable one:
+
+```bash
+task cluster:up      # single-node kind cluster + operator
+task cluster:status
+task cluster:down
+```
+
+That cluster is a test fixture, nothing more. For a full local OPM demo with Flux and a local
+registry, see `opm-kind-demo`.
 
 ## Layout
 
