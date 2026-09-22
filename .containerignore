@@ -1,0 +1,9 @@
+# Only the bundle, the modules, the platform, the vendor tree and the scripts
+# belong in the image. Everything else is build context nobody needs.
+.git
+.github
+.claude
+openspec
+hack
+*.md
+Taskfile.yml

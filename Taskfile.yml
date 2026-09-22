@@ -34,6 +34,11 @@ tasks:
         if [ -z "$files" ]; then echo "no scripts yet"; exit 0; fi
         echo "$files" | xargs shellcheck -x
 
+  vendor:sync:
+    desc: Refresh vendor/ from the published source of every platform dependency
+    cmds:
+      - ./hack/vendor-sync.sh
+
   build:
     desc: Build the installer image
     cmds:
@@ -45,10 +50,17 @@ tasks:
         fi
         podman build -t '{{.IMAGE}}:{{.TAG}}' .
 
+  image:render:
+    desc: Prove the built image still renders offline (no network, empty CUE cache)
+    cmds:
+      - IMAGE='{{.IMAGE}}' TAG='{{.TAG}}' ./hack/image-render.sh
+
   check:
     desc: Everything a change must pass
     cmds:
       - task: lint
+      - task: build
+      - task: image:render
 
   # Deliberately bare. This task creates a stock Kubernetes cluster and stops:
   # no OPM operator, no CRDs, no Platform. Bootstrapping those is the installer

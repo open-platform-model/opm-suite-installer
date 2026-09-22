@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# opm-suite — render the applications bundled in this image to Kubernetes
+# manifests.
+#
+# This script orchestrates `opm` and does nothing else. It never parses or
+# rewrites rendered manifests, never reimplements render or validation, and
+# never suppresses what `opm` says: the "local replacement in effect" warnings
+# are the offline mechanism announcing itself and belong on stderr where a
+# reader can see them.
+#
+# Nothing here contacts a cluster or a registry. Rendering needs no kubeconfig,
+# no service account token and no Platform object.
+set -euo pipefail
+
+readonly EX_OK=0
+readonly EX_USAGE=64      # no subcommand, or one that is not recognised
+readonly EX_NOAPP=65      # an application the bundle does not carry
+readonly EX_RENDER=70     # a render failed
+
+# The render working directory, global because the EXIT trap outlives the
+# function that creates it: a `local` here leaves the trap dereferencing an
+# unbound variable under `set -u`, which turns every successful render into
+# exit 1.
+WORK=""
+
+# shellcheck disable=SC2329  # invoked by the EXIT trap below
+cleanup() {
+	[ -n "$WORK" ] || return 0
+	# Anything copied out of a CUE module cache arrives read-only.
+	chmod -R u+w "$WORK" 2>/dev/null || true
+	rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+BUNDLE="${OPM_SUITE_BUNDLE:-/opt/opm/bundle}"
+PLATFORM="${OPM_SUITE_PLATFORM:-/opt/opm/platform}"
+NAMESPACE="${OPM_SUITE_NAMESPACE:-default}"
+OUT="${OPM_SUITE_OUT:-}"
+
+usage() {
+	cat >&2 <<'EOF'
+opm-suite — render the OPM applications bundled in this image
+
+Usage:
+  opm-suite render [app...]   render bundled applications to manifests
+  opm-suite list              list the bundled applications and the opm version
+
+With no application named, render reads the ordered, comma-separated list in
+OPM_SUITE_APPS. With neither, it renders every bundled application.
+
+Environment:
+  OPM_SUITE_APPS        ordered, comma-separated; used when no app is named
+  OPM_SUITE_NAMESPACE   target namespace (default: default)
+  OPM_SUITE_OUT         unset: one YAML stream on stdout.
+                        A directory: split files under <dir>/<app>/
+  OPM_SUITE_BUNDLE      the bundle module (default: /opt/opm/bundle)
+  OPM_SUITE_PLATFORM    the platform module (default: /opt/opm/platform)
+
+Exit codes:
+  0   success
+  64  no subcommand, or one that is not recognised
+  65  an application the bundle does not carry
+  70  a render failed
+EOF
+}
+
+# Every directory under <bundle>/instances is one bundled application. The
+# bundle is the inventory; there is no separate list to keep in step with it.
+bundled_apps() {
+	local dir
+	for dir in "$BUNDLE"/instances/*/; do
+		[ -d "$dir" ] || continue
+		basename "$dir"
+	done
+}
+
+cmd_list() {
+	local app
+	for app in $(bundled_apps); do
+		echo "$app"
+	done
+	opm version
+}
+
+# Resolve which applications to render: positional arguments first, then
+# OPM_SUITE_APPS, then everything. Duplicates collapse to their first position.
+select_apps() {
+	local -a requested=()
+	local app
+
+	if [ "$#" -gt 0 ]; then
+		requested=("$@")
+	elif [ -n "${OPM_SUITE_APPS:-}" ]; then
+		# Split on commas, drop surrounding whitespace and empty entries.
+		local IFS=','
+		for app in $OPM_SUITE_APPS; do
+			app="${app#"${app%%[![:space:]]*}"}"
+			app="${app%"${app##*[![:space:]]}"}"
+			[ -n "$app" ] && requested+=("$app")
+		done
+	else
+		local bundled
+		mapfile -t bundled < <(bundled_apps)
+		requested=("${bundled[@]}")
+	fi
+
+	local -a seen=()
+	for app in "${requested[@]}"; do
+		case " ${seen[*]-} " in
+		*" $app "*) continue ;;
+		esac
+		seen+=("$app")
+	done
+	printf '%s\n' "${seen[@]-}"
+}
+
+# Validate the whole selection before rendering anything, so an unknown name
+# in last position cannot leave the earlier applications already rendered.
+validate_apps() {
+	local app
+	for app in "$@"; do
+		if [ ! -d "$BUNDLE/instances/$app" ]; then
+			echo "opm-suite: no such bundled application: $app" >&2
+			echo "this image carries:" >&2
+			bundled_apps | sed 's/^/  /' >&2
+			exit "$EX_NOAPP"
+		fi
+	done
+}
+
+cmd_render() {
+	local -a apps
+	mapfile -t apps < <(select_apps "$@")
+	if [ "${#apps[@]}" -eq 0 ]; then
+		echo "opm-suite: this image carries no bundled applications" >&2
+		exit "$EX_NOAPP"
+	fi
+	validate_apps "${apps[@]}"
+
+	# The namespace is written into generated CUE, so it has to be a namespace
+	# and not an arbitrary string.
+	if ! [[ $NAMESPACE =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+		echo "opm-suite: not a valid namespace: $NAMESPACE" >&2
+		exit "$EX_USAGE"
+	fi
+
+	# The namespace is supplied by a generated CUE file unified into the
+	# instance package, because `opm instance build -n` does not set it (D6).
+	# That write must not touch the image filesystem: the whole bundle tree is
+	# copied to TMPDIR first, so the sibling layout the local replacements
+	# depend on (../modules, ../vendor) keeps resolving. It also keeps the
+	# image usable with a read-only root filesystem.
+	WORK=$(mktemp -d "${TMPDIR:-/tmp}/opm-suite-XXXXXX")
+	cp -r "$(dirname "$BUNDLE")"/. "$WORK/"
+
+	local bundle platform
+	bundle="$WORK/$(basename "$BUNDLE")"
+	platform="$WORK/$(basename "$PLATFORM")"
+	# A platform from outside the bundle tree is used where it stands.
+	[ -d "$platform" ] || platform="$PLATFORM"
+
+	# The CUE module cache needs somewhere writable. An externally supplied one
+	# is honoured on purpose: it is how the offline claim is checked from
+	# outside the container. It should still be empty when the run ends,
+	# because everything is vendored.
+	export CUE_CACHE_DIR="${CUE_CACHE_DIR:-$WORK/cue-cache}"
+	mkdir -p "$CUE_CACHE_DIR"
+
+	[ -n "$OUT" ] && mkdir -p "$OUT"
+
+	local app pkg first=1
+	for app in "${apps[@]}"; do
+		# The generated file joins the instance's CUE package, whose name is
+		# not required to match the directory name.
+		pkg=$(sed -n 's/^package \([a-zA-Z_][a-zA-Z0-9_]*\).*/\1/p' \
+			"$bundle/instances/$app/instance.cue" | head -1)
+		if [ -z "$pkg" ]; then
+			echo "opm-suite: $app has no CUE package clause in instance.cue" >&2
+			exit "$EX_RENDER"
+		fi
+		printf 'package %s\n\nmetadata: namespace: "%s"\n' "$pkg" "$NAMESPACE" \
+			>"$bundle/instances/$app/zz-generated-namespace.cue"
+
+		echo "opm-suite: rendering $app into namespace $NAMESPACE" >&2
+		if [ -n "$OUT" ]; then
+			mkdir -p "$OUT/$app"
+			if ! opm instance build "$bundle/instances/$app/instance.cue" \
+				--platform "$platform" --split --out-dir "$OUT/$app"; then
+				echo "opm-suite: render failed for $app" >&2
+				exit "$EX_RENDER"
+			fi
+			echo "opm-suite: wrote $OUT/$app" >&2
+		else
+			# `opm` emits a YAML stream with no leading or trailing document
+			# separator, so one is needed between applications or the last
+			# document of one would merge into the first of the next.
+			[ "$first" -eq 1 ] || echo "---"
+			if ! opm instance build "$bundle/instances/$app/instance.cue" \
+				--platform "$platform"; then
+				echo "opm-suite: render failed for $app" >&2
+				exit "$EX_RENDER"
+			fi
+		fi
+		first=0
+	done
+}
+
+main() {
+	if [ "$#" -eq 0 ]; then
+		usage
+		exit "$EX_USAGE"
+	fi
+
+	local subcommand="$1"
+	shift
+
+	case "$subcommand" in
+	render)
+		cmd_render "$@"
+		;;
+	list)
+		cmd_list
+		;;
+	*)
+		echo "opm-suite: unknown subcommand: $subcommand" >&2
+		usage
+		exit "$EX_USAGE"
+		;;
+	esac
+	exit "$EX_OK"
+}
+
+main "$@"
