@@ -1,0 +1,36 @@
+version: "3"
+
+vars:
+  IMAGE: '{{.IMAGE | default "localhost/opm-suite-installer"}}'
+  TAG: '{{.TAG | default "dev"}}'
+
+tasks:
+  default:
+    cmds: [task: --list]
+
+  lint:
+    desc: Shellcheck every script
+    cmds:
+      - |
+        set -euo pipefail
+        files=$(find . -path ./.git -prune -o -type f -name '*.sh' -print \
+                -o -path ./.git -prune -o -type f -path './scripts/*' ! -name '*.md' -print \
+                | sort -u)
+        if [ -z "$files" ]; then echo "no scripts yet"; exit 0; fi
+        echo "$files" | xargs shellcheck -x
+
+  build:
+    desc: Build the installer image
+    cmds:
+      - |
+        set -euo pipefail
+        if [ ! -f Containerfile ]; then
+          echo "no Containerfile yet; nothing to build"
+          exit 0
+        fi
+        podman build -t '{{.IMAGE}}:{{.TAG}}' .
+
+  check:
+    desc: Everything a change must pass
+    cmds:
+      - task: lint

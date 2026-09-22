@@ -1,0 +1,13 @@
+# Build output
+/bin/
+/dist/
+*.tar
+
+# CUE
+cue.mod/pkg/
+cue.mod/gen/
+cue.mod/usr/
+
+# Local scratch
+/tmp/
+/.scratch/
