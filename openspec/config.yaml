@@ -1,0 +1,149 @@
+schema: spec-driven
+
+context: |
+  # opm-suite-installer Constitution
+
+  A proof of concept: one OCI container image carrying the `opm` CLI, a bash entrypoint script
+  and one or more locally bundled OPM modules, run as a Kubernetes `Batch/Job` to install a
+  suite of applications into the cluster it runs in. Input arrives as job arguments and
+  environment variables. Milestone 1 is podinfo, from a bundled `#Module` through a
+  `#ModuleInstance`.
+
+  The repo exists to answer one question: is a self-contained installer image a useful way to
+  ship a suite of OPM applications? A change that produces a clear negative answer has
+  succeeded.
+
+  ## I. Bash Only
+
+  The entrypoint and every helper is a bash script. No Go, no Python, no compiled helpers, no
+  vendored binaries beyond `opm` itself and the base image's own tools.
+  - If something appears to need a real language, that is a finding to record, not a licence to
+    reach for one. Say so in the proposal and propose the bash shape anyway.
+  - Scripts pass `shellcheck -x`. `set -euo pipefail` at the top of every executable script.
+  - Prefer one readable script over a sourced library. Extract a helper only at the third
+    repetition.
+
+  ## II. The `opm` CLI Is a Dependency, Never a Fork
+
+  Render, validation, platform resolution, apply and prune belong to `opm`. This repo
+  orchestrates; it never reimplements.
+  - A workflow `opm` cannot express is a gap in `cli/` (or upstream in `library/`). Record it in
+    the change and in `FINDINGS.md`; do not route around it in bash.
+  - Never parse and rewrite rendered Kubernetes manifests. If the bundle needs different output,
+    the module or the values are wrong, not the output.
+  - Pin the `opm` version the image installs. An unpinned CLI makes every finding unreproducible.
+
+  ## III. Proof of Concept, Not a Product
+
+  Nothing here is supported, published for others, or built to last.
+  - No CI-published artifacts beyond a container image, and only when a change explicitly asks
+    for one.
+  - This repo never publishes a CUE module under `opmodel.dev/*` or `testing.opmodel.dev/*`.
+    Bundled modules live in this repo's own CUE module and are imported by local path.
+  - Duplication beats abstraction. A second bundled application is a copy-paste, not a
+    templating engine.
+  - Deleting the whole repo must remain a cheap decision. Anything that makes that expensive is
+    out of scope.
+
+  ## IV. Findings Are the Output
+
+  The image is half the deliverable; what it teaches is the other half.
+  - Every change that discovers something non-obvious adds a `FINDINGS.md` entry: what was
+    tried, what happened, what it means.
+  - Negative results are first-class. "This does not work, here is why" closes a change
+    successfully.
+  - Claims about `opm`, CUE or Kubernetes behavior are verified by running them, never inferred
+    from source comments or documentation.
+
+  ## V. Assume a Cluster
+
+  The repo does not provision kind, install the OPM operator, or manage CRDs. It targets a
+  cluster that already has them. `opm-kind-demo` covers that ground and is not duplicated here.
+
+  ## VI. Small Batches
+
+  Every change is small enough to finish and verify in one session.
+  - One change adds one capability. "Build the image AND write the script AND add RBAC AND wire
+    the Job" is four changes.
+  - If a task list passes ~10 items, split the change.
+
+  ## Standing Constraints From the OPM CLI
+
+  Verified against `cli/` at bootstrap. Re-verify before depending on any of them.
+
+  - Bundling modules locally forces CLI-owned apply: a local render stamps
+    `module-instance.opmodel.dev/source: local`, and the operator handoff path refuses it. The
+    Job applies resources itself and keeps ownership. No operator reconcile loop, no drift
+    correction after it exits.
+  - The Job's ServiceAccount needs RBAC for every kind any bundled module renders, plus the
+    `ModuleInstance` CR written as inventory.
+  - `opm instance apply` requires the `ModuleInstance` CRD to exist already.
+  - Platform precedence: `--platform <dir>` > cluster `Platform` CR > `~/.opm/platform/`. The
+    cluster-CR path resolves a dependency closure from the registry, which is a network call. A
+    self-contained image bakes a platform module and passes `--platform`.
+  - Offline operation depends on a warm `CUE_CACHE_DIR`. Unverified. Prove it before designing
+    around it.
+
+  ## Registry
+
+  `opmodel.dev/*` and `testing.opmodel.dev/*` both resolve from `ghcr.io/open-platform-model`,
+  anonymously:
+
+      export CUE_REGISTRY='opmodel.dev=ghcr.io/open-platform-model,testing.opmodel.dev=ghcr.io/open-platform-model,registry.cue.works'
+      export OPM_REGISTRY="$CUE_REGISTRY"
+
+  A "module not found" error is a mapping or network problem. Starting a local registry is not
+  the fix.
+
+  ## Validation Gates
+
+  `task lint` (shellcheck) and `task check` before a change lands. Once an image exists,
+  `task build` joins them. A change that claims cluster behavior must have been run against a
+  real cluster, and the change says which one.
+
+rules:
+  proposal:
+    - "Focus: WHY we are doing this, WHAT is in and out of scope."
+    - State which question about the installer-image idea this change answers.
+    - Name the alternative that was not chosen, including "do nothing".
+    - Scope MUST be one capability, finishable in one session (Principle VI).
+    - If the change needs something `opm` cannot do, say so explicitly (Principle II).
+
+  design:
+    - "Focus: HOW we will implement it technically."
+    - Required only when the change makes a structural choice worth arguing about; a one-script
+      change does not need one.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
+    - "Show the bash shape: the script contract, its arguments, its environment variables,
+      its exit codes."
+    - State the RBAC delta any cluster-facing change requires.
+    - Any claim about `opm`, CUE or Kubernetes behavior MUST cite a command that was run and its
+      output, not a source comment (Principle IV).
+
+  specs:
+    - "Focus: WHAT observable behavior is changing, not HOW."
+    - Use RFC 2119 keywords and ADDED/MODIFIED/REMOVED deltas.
+    - "Observable behavior here means: exit codes, stdout and stderr, cluster state after the
+      Job completes, and behavior on re-run."
+    - "Every capability MUST have a scenario for the second run: this is an installer, and
+      idempotency is the whole point."
+    - MODIFIED deltas keep every existing scenario heading verbatim; retire one with REMOVED plus
+      ADDED, never by renaming it.
+
+  tasks:
+    - "Focus: STEPS to take."
+    - Keep tasks tiny, 1 to 2 hours each.
+    - If the list passes ~10 items, split the change instead.
+    - Include a `FINDINGS.md` task whenever the change discovers something non-obvious.
+    - "Final task is always the validation gate: `task check`, plus a named cluster run for
+      cluster-facing changes."
+
+operations:
+  apply:
+    guidance:
+      - Run the scripts you write. A script that has never executed is not implemented.
+      - Verify cluster claims against a real cluster and name it in the change.
+  archive:
+    guidance:
+      - Before archiving, confirm the `FINDINGS.md` entry exists if the change discovered
+        anything, including that the idea did not work.
