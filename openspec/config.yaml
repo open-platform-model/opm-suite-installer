@@ -55,16 +55,20 @@ context: |
   - Claims about `opm`, CUE or Kubernetes behavior are verified by running them, never inferred
     from source comments or documentation.
 
-  ## V. The Test Cluster Is Disposable, Not a Demo
+  ## V. The Test Cluster Starts Bare
 
-  `task cluster:up` creates a single-node kind cluster and installs the operator;
-  `task cluster:down` deletes it. That is the whole contribution.
+  `task cluster:up` creates a stock single-node kind cluster and stops. No OPM operator, no
+  CRDs, no Platform. `task cluster:down` deletes it; recreating it is the reset.
+  - **Nothing but the installer image may prepare that cluster.** Bootstrapping the CRDs and
+    the operator is what the experiment is testing. A cluster that arrives pre-prepared proves
+    nothing, so never add an operator install to the `cluster:*` tasks, not even behind a flag,
+    and never hand-run one before a test.
+  - A change whose verification depends on cluster state nobody can reproduce from
+    `cluster:up` alone is not verified.
   - No Flux, no SOPS, no local registry, no sample bundle, no ingress. `opm-kind-demo` owns
     that ground and is not duplicated here.
-  - The cluster is a test fixture. Any change that makes recreating it from scratch painful, or
-    that makes a finding depend on cluster state nobody can reproduce, is out of scope.
-  - The installer image must never assume it is running on this cluster. It targets any cluster
-    with the operator and CRDs installed.
+  - The image must never assume it is running on this particular cluster. It targets any
+    cluster it can reach.
 
   ## VI. Small Batches
 
@@ -83,7 +87,10 @@ context: |
     correction after it exits.
   - The Job's ServiceAccount needs RBAC for every kind any bundled module renders, plus the
     `ModuleInstance` CR written as inventory.
-  - `opm instance apply` requires the `ModuleInstance` CRD to exist already.
+  - `opm instance apply` requires the `ModuleInstance` CRD to exist already, so on a bare
+    cluster the image installs it: `opm operator install --crds-only` for the CLI-owned path.
+  - A full `opm operator install` also seeds a cluster `Platform` that is currently broken (see
+    `FINDINGS.md`); `--crds-only` or `--skip-platform` avoids seeding it.
   - Platform precedence: `--platform <dir>` > cluster `Platform` CR > `~/.opm/platform/`. The
     cluster-CR path resolves a dependency closure from the registry, which is a network call. A
     self-contained image bakes a platform module and passes `--platform`.

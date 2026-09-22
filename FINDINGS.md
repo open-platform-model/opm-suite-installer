@@ -17,8 +17,9 @@ more than one that confirms it.
 
 ## 2026-09-22: `opm operator install` leaves the cluster Platform unusable
 
-**Tried.** `task cluster:up` on a fresh kind v0.32.0 cluster (Kubernetes v1.36.1): `kind create
-cluster`, then `opm operator install` with the CLI at v1.0.0-alpha.20-2-g2bfebd9.
+**Tried.** A fresh kind v0.32.0 cluster (Kubernetes v1.36.1), then a full `opm operator install`
+with the CLI at v1.0.0-alpha.20-2-g2bfebd9. (`task cluster:up` ran that install at the time; it
+no longer does, and must not, see constitution principle V.)
 
 **Happened.** Install reported success and seeded the Platform, then the operator refused to
 reconcile it:
@@ -50,8 +51,11 @@ committed in any repo to break this, which is what makes it hard to notice: the 
 image worked before core alpha.10 was published. This is an upstream defect in `opm-operator`
 (or in `library`'s unpinned `DefaultSchemaModule`), not something this repo can fix.
 
-**Consequence for the installer image.** The cluster `Platform` CR is not a usable platform
-source here. That removes the main argument against baking a `#Platform` module into the image
-and passing `--platform`: the baked platform is not just the offline-friendly choice, it is
-currently the only working one. Re-test once the operator pins core.
+**Consequence for the installer image.** Two things follow. The cluster `Platform` CR is not a
+usable platform source, which removes the main argument against baking a `#Platform` module into
+the image and passing `--platform`: the baked platform is not just the offline-friendly choice,
+it is currently the only working one. And when the image bootstraps a bare cluster it should
+install CRDs only (`opm operator install --crds-only`, or `--skip-platform` for a full install)
+rather than seeding a Platform that will sit `Stalled` forever. Re-test once the operator pins
+core.
 

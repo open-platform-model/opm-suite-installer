@@ -118,11 +118,13 @@ away.
    reimplement render, validation or apply logic in bash.
 4. **Every non-obvious discovery gets written down.** The output of this repo is knowledge as
    much as it is an image. `FINDINGS.md` is the log.
-5. **The test cluster is disposable, not a demo.** `task cluster:up` creates a single-node kind
-   cluster and installs the operator; `task cluster:down` deletes it. That is the whole
-   contribution: no Flux, no SOPS, no local registry, no sample bundle. `opm-kind-demo` owns
-   that ground and is not duplicated here. The installer image itself must never assume it is
-   running on this cluster.
+5. **The test cluster starts bare, and nothing but the image may prepare it.** `task cluster:up`
+   creates a stock single-node kind cluster and stops. No OPM operator, no CRDs, no Platform.
+   Bootstrapping those is the installer image's job and it is the thing under test: a cluster
+   that arrives pre-prepared proves nothing. Never add an operator install to the `cluster:*`
+   tasks, not even behind a flag, and never hand-run one before a test.
+   `task cluster:down` deletes the cluster; recreating it is the reset. No Flux, no SOPS, no
+   local registry, no sample bundle: `opm-kind-demo` owns that ground and is not duplicated here.
 
 ## Standing Constraints From the OPM CLI
 
@@ -137,7 +139,11 @@ snapshots of a moving codebase, not a contract.
 - **The Job's ServiceAccount needs RBAC for every kind any bundled module renders**, plus the
   `ModuleInstance` CR it writes as inventory.
 - **`opm instance apply` requires the `ModuleInstance` CRD to already exist.** It fails fast
-  with a hint when it is missing.
+  with a hint when it is missing. On a bare cluster the image must therefore install the CRDs
+  itself before applying anything: `opm operator install --crds-only` for the CLI-owned path,
+  or a full `opm operator install` if a later change wants a reconciling operator.
+- **A full `opm operator install` also seeds a cluster `Platform` that is currently broken**
+  (see `FINDINGS.md`). `--crds-only`, or `--skip-platform`, avoids seeding it.
 - **Platform precedence is `--platform <dir>` > cluster `Platform` CR > `~/.opm/platform/`**
   (0006:D21). The cluster-CR path generates a platform module and resolves its dependency
   closure from the registry, which is a network call. A self-contained image bakes a platform
@@ -180,13 +186,13 @@ Target shape. Directories appear as the OpenSpec changes that create them land.
 | `task lint` | `shellcheck` every script |
 | `task build` | Build the installer image |
 | `task check` | Everything a change must pass before it lands |
-| `task cluster:up` | Create the kind test cluster and install the operator |
+| `task cluster:up` | Create a bare kind test cluster, no OPM anything |
 | `task cluster:status` | What the test cluster is running |
 | `task cluster:load` | Load the locally built image into the cluster |
 | `task cluster:down` | Delete the test cluster |
 
-`CLUSTER` renames the cluster, `NODE_IMAGE` pins a Kubernetes version, `OPERATOR=false` skips
-the operator install, `REGISTRY` overrides the CUE registry mapping.
+`CLUSTER` renames the cluster, `NODE_IMAGE` pins a Kubernetes version, `REGISTRY` overrides the
+CUE registry mapping.
 
 ## Change Workflow
 

@@ -19,7 +19,9 @@ vars:
 
 tasks:
   default:
-    cmds: [task: --list]
+    desc: Show available tasks
+    cmds:
+      - task --list
 
   lint:
     desc: Shellcheck every script
@@ -48,30 +50,36 @@ tasks:
     cmds:
       - task: lint
 
+  # Deliberately bare. This task creates a stock Kubernetes cluster and stops:
+  # no OPM operator, no CRDs, no Platform. Bootstrapping those is the installer
+  # image's job, and it is the thing the experiment is testing. A cluster that
+  # arrives pre-prepared proves nothing.
   cluster:up:
-    desc: Create the kind test cluster and install the OPM operator
+    desc: Create a bare kind test cluster (no OPM operator, on purpose)
     cmds:
       - |
         set -euo pipefail
         if kind get clusters 2>/dev/null | grep -qx '{{.CLUSTER}}'; then
           echo "cluster '{{.CLUSTER}}' already exists"
+          # A reused cluster that already carries OPM CRDs is not a valid
+          # starting line: whatever put them there did the image's job for it.
+          if kubectl --context 'kind-{{.CLUSTER}}' get crd -o name 2>/dev/null \
+               | grep -q opmodel.dev; then
+            echo
+            echo "REFUSING: this cluster already has OPM CRDs installed." >&2
+            echo "The experiment tests whether the installer image can bootstrap a bare" >&2
+            echo "cluster, so a pre-prepared one proves nothing." >&2
+            echo "Run 'task cluster:down' then 'task cluster:up' for a clean start." >&2
+            exit 1
+          fi
         else
           args=(create cluster --name '{{.CLUSTER}}' --config '{{.KIND_CONFIG}}' --wait 120s)
           if [ -n '{{.NODE_IMAGE}}' ]; then args+=(--image '{{.NODE_IMAGE}}'); fi
           kind "${args[@]}"
         fi
-      - task: cluster:operator
-
-  cluster:operator:
-    desc: Install the OPM operator into the kind cluster (OPERATOR=false to skip)
-    cmds:
-      - |
-        set -euo pipefail
-        if [ '{{.OPERATOR | default "true"}}' != 'true' ]; then
-          echo "OPERATOR=false; skipping operator install"
-          exit 0
-        fi
-        opm operator install --context 'kind-{{.CLUSTER}}'
+        echo
+        echo "Bare cluster ready. No OPM CRDs, no operator, no Platform."
+        echo "Installing those is the installer image's job."
 
   cluster:load:
     desc: Load the locally built installer image into the kind cluster
@@ -96,7 +104,8 @@ tasks:
         echo
         kubectl --context 'kind-{{.CLUSTER}}' get nodes
         echo
-        kubectl --context 'kind-{{.CLUSTER}}' get crd -o name | grep opmodel.dev || echo "no OPM CRDs installed"
+        kubectl --context 'kind-{{.CLUSTER}}' get crd -o name | grep opmodel.dev \
+          || echo "no OPM CRDs (expected on a bare cluster; the installer image bootstraps them)"
         echo
         kubectl --context 'kind-{{.CLUSTER}}' get platform,moduleinstance -A 2>/dev/null || true
 
