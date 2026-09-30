@@ -388,12 +388,12 @@ import "cue.dev/x/k8s.io/apimachinery/pkg/apis/meta/v1"
 	"maxItems"?:      int64 & int
 	"maxLength"?:     int64 & int
 	"maxProperties"?: int64 & int
-	"maximum"?:       number
+	"maximum"?:       float64
 	"minItems"?:      int64 & int
 	"minLength"?:     int64 & int
 	"minProperties"?: int64 & int
-	"minimum"?:       number
-	"multipleOf"?:    number
+	"minimum"?:       float64
+	"multipleOf"?:    float64
 	"not"?:           #JSONSchemaProps
 	"nullable"?:      bool
 	"oneOf"?:         [...#JSONSchemaProps]
