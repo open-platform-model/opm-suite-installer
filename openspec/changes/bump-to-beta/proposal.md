@@ -72,8 +72,9 @@ None. Spec-level behavior (`bundle-render`, `bundle-apply`, `bundle-lifecycle`) 
   API is expected to stay `opmodel.dev/v1alpha1` (the CRD API does not move until GA);
   `scripts/opm-suite` hardcodes it, so it is re-read off the installed CRD, not assumed.
 - **Upstream gates:** G1 (core beta on GHCR), G3 (catalogs on GHCR) and G6 (the `cli` release
-  embedding the beta operator, with GoReleaser assets). Nothing here publishes or releases: the
-  repo has no release-please and no CI.
+  embedding the beta operator, with GoReleaser assets). The version numbers above are expected
+  values: if a gate lands on a different version (burned tag), the recorded gate version replaces
+  it everywhere. Nothing here publishes or releases: the repo has no release-please and no CI.
 - **In-flight change `bundle-gitea-postgres`:** its design reads catalog facts from the vendored
   `opmodel.dev/catalogs/opm@v4`, which this change moves from 4.4.0 to 4.4.4. That change MUST
   re-read its catalog facts against the vendored 4.4.4 and pin its new modules on the beta line.

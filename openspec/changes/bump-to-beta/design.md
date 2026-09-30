@@ -151,9 +151,10 @@ forces a module fix, it lands as its own inner commit (`fix(podinfo): ...`) in t
 squash stays `fix(deps)`.
 
 **D6. Versions come from the gate lines, not from this document.** Each gate line records the
-version actually published. If a version was burned upstream (the canon moves the target to
-`-beta.2`), the tasks use the recorded value; `beta.1` and `4.4.4` in these artifacts are the
-expected values.
+version actually published. The inputs are G1 (core version), G3 (catalogs/k8s and catalogs/opm
+versions) and G6 (the `cli` tag and the operator version it embeds). If a gate lands on a different
+version (burned tag), the recorded gate version replaces it everywhere; `beta.1`, `beta.2` and
+`4.4.4` in these artifacts are the expected values.
 
 ## Risks / Trade-offs
 

@@ -1,9 +1,11 @@
 ## Gates
 
 Ticked by the supervisor only. Task 1.1 needs no gate; 1.2 to 1.4 need G1 and G3; section 2
-onward needs G6. Each gate records the version actually published: if a version was burned and
-the target moved (for example to `-beta.2`), every task below uses the recorded value, and the
-`beta.1` / `4.4.4` written in them are only the expected values (design D6).
+onward needs G6. Inputs per gate: G1 gives the core version (task 1.2, 1.3); G3 gives the
+catalogs/k8s and catalogs/opm versions (1.2, 1.3); G6 gives the `cli` tag and the operator version
+it embeds (1.4 fallback, 2.1, 3.1, 3.2). If a gate lands on a different version (burned tag), the
+recorded gate version replaces it everywhere: every `beta.1`, `beta.2` and `4.4.4` written below is
+only the expected value (design D6).
 
 - [ ] G1 `opmodel.dev/core@v2` is on GHCR at the first core beta (expected v2.0.0-beta.1; record the real version: `________`)
 - [ ] G3 `opmodel.dev/catalogs/k8s@v1` first beta (expected v1.0.0-beta.1, tag k8s-v1.0.0-beta.1) and `opmodel.dev/catalogs/opm@v4` on core beta (expected v4.4.4, tag opm-v4.4.4) are on GHCR (record the real versions: k8s `________`, opm `________`)
