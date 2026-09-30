@@ -20,7 +20,8 @@ but three namespaced, measured one omission at a time; see the RBAC entry below.
 
 Answered: *can an immutable image revert a failed upgrade with only what `opm` records on the
 cluster?* Yes, and the record is enough on its own — but only once the readiness signal is
-something other than `opm instance status`. See the top two entries.
+something other than `opm instance status`. See the entries on `updatedReplicas` against
+`replicas` and on `opm` recording the values it applied.
 
 Answered: *does a warm `CUE_CACHE_DIR` keep `opm instance build` off the network?* It does, but
 the question stopped mattering. Vendoring makes the render offline by construction rather than by
@@ -47,11 +48,19 @@ Job on a bare kind cluster `opm-suite` (kind v0.32.0, Kubernetes v1.36.1).
   bundle fine, because they do honor the replacement. The bundle's two lines were set by hand to
   match the platform; `cue mod edit --require` would have worked but deletes the comment that
   explains why `default: true` is load bearing.
-- `cue.dev/x/k8s.io` moved from v0.11.0 to v0.12.0 in `platform/` and was added to
-  `modules/podinfo/`. It follows catalogs/opm, whose `cue.mod/module.cue` declares it; the k8s
-  catalog declares only core. `platform/cue.mod/local-module.cue` said otherwise and now does not.
+- `cue.dev/x/k8s.io` moved from v0.11.0 to v0.12.0 in `platform/`. It follows catalogs/opm,
+  whose `cue.mod/module.cue` declares it; the k8s catalog declares only core.
+  `platform/cue.mod/local-module.cue` said otherwise and now does not. `cue mod get` also added
+  it to `modules/podinfo/`, which imports nothing from it; `cue mod tidy` dropped it again, so
+  podinfo pins only core and catalogs/opm, as before.
 - `task vendor:sync` handled the `-beta.1` strings unchanged; the vendored tree stayed 2.3 MB.
-- Image size 174,471,791 bytes before, 191,495,782 after (+17.0 MB; `vendor/` did not grow, so the new `opm` binary accounts for it).
+- Image size 174,471,791 bytes before, 191,495,782 after (+17.0 MB), all of it in the
+  `RUN` layer; `vendor/` did not grow. About 8.8 MB is the larger `opm` binary (78,830,895 to
+  87,649,593 bytes). The other 8.2 MB is Debian's `libssl3t64` security update (3.5.7-1~deb13u2
+  in the base image, deb13u3 now), which the `apt-get install` step pulls in and copies into the
+  layer (`libcrypto.so.3`, `libssl.so.3`). The baseline did not show it because its build reused
+  the `RUN` layer cached on 2026-09-22. The step is unpinned, so its size moves with Debian's
+  security archive, not only with the `opm` pin.
 - `opm version 1.0.0-beta.2 (cd463fc8e2ab3a396fa9409a04d4726c1ad8b28a)`, CUE SDK v0.17.1.
 - The Job log: `opm-operator v1.0.0-beta.1 installed (embedded, 4 resource(s) applied)`. The
   fourth CRD is `transformerregistrations.opmodel.dev`. The Job's RBAC needed no change: the
