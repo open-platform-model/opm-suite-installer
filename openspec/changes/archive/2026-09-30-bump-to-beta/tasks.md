@@ -49,7 +49,7 @@ exported on two separate lines. `$SCRATCH` below is the worker's scratchpad dire
 ## 6. Delivery
 
 - [x] 6.1 Archive the change with `openspec archive bump-to-beta --skip-specs --yes` (no spec delta). Verify: `openspec/changes/archive/<date>-bump-to-beta/` exists, `openspec/specs/` is unchanged, and `openspec validate --all --strict` still passes. Commit as `chore(openspec): archive bump-to-beta`.
-- [ ] 6.2 `git merge origin/main` if main moved, push with `git push -u origin beta/bump-to-beta`, and open one PR. Scan title and body for bare `@` first.
+- [x] 6.2 `git merge origin/main` if main moved, push with `git push -u origin beta/bump-to-beta`, and open one PR. Scan title and body for bare `@` first.
   - **Title / squash commit:** `fix(deps): move the installer image to the OPM beta line` (design D5; the supervisor writes the final squash message).
   - **Carrier:** no. The repo has no release-please, so there is no footer (no `Release-As:`), and no release PR follows.
   - **Merge gate:** G6 ticked, 3.1, 3.2 and 5.1 done, supervisor review. The supervisor merges; the worker never does.
