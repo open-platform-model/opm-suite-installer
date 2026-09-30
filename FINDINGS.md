@@ -51,7 +51,7 @@ Job on a bare kind cluster `opm-suite` (kind v0.32.0, Kubernetes v1.36.1).
   `modules/podinfo/`. It follows catalogs/opm, whose `cue.mod/module.cue` declares it; the k8s
   catalog declares only core. `platform/cue.mod/local-module.cue` said otherwise and now does not.
 - `task vendor:sync` handled the `-beta.1` strings unchanged; the vendored tree stayed 2.3 MB.
-- Image size 174,471,791 bytes before, 191,495,782 after (+17.0 MB, all of it the `opm` binary).
+- Image size 174,471,791 bytes before, 191,495,782 after (+17.0 MB; `vendor/` did not grow, so the new `opm` binary accounts for it).
 - `opm version 1.0.0-beta.2 (cd463fc8e2ab3a396fa9409a04d4726c1ad8b28a)`, CUE SDK v0.17.1.
 - The Job log: `opm-operator v1.0.0-beta.1 installed (embedded, 4 resource(s) applied)`. The
   fourth CRD is `transformerregistrations.opmodel.dev`. The Job's RBAC needed no change: the
