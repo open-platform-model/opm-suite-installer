@@ -28,6 +28,44 @@ cache warmth, and the vendored tree is a tenth the size and reviewable in a diff
 
 ## Entries
 
+## 2026-09-30: the move to the OPM beta line needed pins only
+
+**Tried.** Moving every OPM input of the image off the alpha line: core v2.0.0-alpha.10 to
+v2.0.0-beta.1, catalogs/opm v4.4.0 to v4.4.4, catalogs/k8s v1.0.0-alpha.3 to v1.0.0-beta.1, and
+`opm` v1.0.0-alpha.20 to v1.0.0-beta.2 (the first `cli` release embedding opm-operator
+v1.0.0-beta.1). Then `task check`, an offline render diffed against the alpha image, and the
+Job on a bare kind cluster `opm-suite` (kind v0.32.0, Kubernetes v1.36.1).
+
+**Happened.**
+
+- No module change. `cue vet` in `platform/` and `modules/podinfo/`, and `cue vet -c=false` in
+  `bundle/`, pass on the beta pins exactly as on the alpha ones, and the offline render is
+  byte-identical to the alpha image's (same Deployment and Service, same bytes).
+- `cue mod get` builds its graph from the registry and ignores `cue.mod/local-module.cue`, so it
+  moves `platform/` and `modules/podinfo/` but cannot run in `bundle/`: the bundle's podinfo
+  placeholder is never published, so the graph cannot be expanded. `cue vet` and `opm` load the
+  bundle fine, because they do honor the replacement. The bundle's two lines were set by hand to
+  match the platform; `cue mod edit --require` would have worked but deletes the comment that
+  explains why `default: true` is load bearing.
+- `cue.dev/x/k8s.io` moved from v0.11.0 to v0.12.0 in `platform/` and was added to
+  `modules/podinfo/`. It follows catalogs/opm, whose `cue.mod/module.cue` declares it; the k8s
+  catalog declares only core. `platform/cue.mod/local-module.cue` said otherwise and now does not.
+- `task vendor:sync` handled the `-beta.1` strings unchanged; the vendored tree stayed 2.3 MB.
+- Image size 174,471,791 bytes before, 191,495,782 after (+17.0 MB, all of it the `opm` binary).
+- `opm version 1.0.0-beta.2 (cd463fc8e2ab3a396fa9409a04d4726c1ad8b28a)`, CUE SDK v0.17.1.
+- The Job log: `opm-operator v1.0.0-beta.1 installed (embedded, 4 resource(s) applied)`. The
+  fourth CRD is `transformerregistrations.opmodel.dev`. The Job's RBAC needed no change: the
+  ClusterRole grants the CRD verbs without `resourceNames`. `ModuleInstance` is still served as
+  `v1alpha1`, and `.status.inventory.entries` and `.spec.values` are still where the rollout guard
+  and the revert read them.
+- A second run changed nothing (all `unchanged`, pod UID the same), and an upgrade to a
+  nonexistent podinfo tag with `OPM_SUITE_TIMEOUT=60s` exited `74` back on `6.7.1`, ready. The
+  three warnings from the RBAC entry below appear unchanged.
+
+**Means.** For this bundle, the jump across four core prereleases to the first beta is a pin
+move and nothing else. The one step that is still manual is the bundle's `cue.mod/module.cue`,
+and it stays manual as long as the bundled module is a placeholder nobody publishes.
+
 ## 2026-09-22: `updatedReplicas` is not the number that catches a stuck rollout; `replicas` is
 
 **Tried.** Upgrading the bundled podinfo from `6.7.1` to a tag that does not exist, on the kind
