@@ -167,8 +167,9 @@ snapshots of a moving codebase, not a contract.
   CUE) and waits again. A module that moved between two releases can make its own revert fail at
   render, which is exit `75`. Exit codes: `74` reverted and ready, `75` revert failed too,
   `76` a `pre-apply` hook refused.
-- **A full `opm operator install` also seeds a cluster `Platform` that is currently broken**
-  (see `FINDINGS.md`). `--crds-only`, or `--skip-platform`, avoids seeding it.
+- **A full `opm operator install` also seeds a cluster `Platform` that was broken as measured
+  on operator v1.0.0-alpha.14** (see `FINDINGS.md`; not re-tested since). `--crds-only`, or
+  `--skip-platform`, avoids seeding it.
 - **Platform precedence is `--platform <dir>` > cluster `Platform` CR > `~/.opm/platform/`**
   (0006:D21). The cluster-CR path generates a platform module and resolves its dependency
   closure from the registry, which is a network call. A self-contained image bakes a platform
@@ -185,8 +186,9 @@ snapshots of a moving codebase, not a contract.
 - **A module's `debugValues` does not reach an instance-file render.** Every bundled application
   ships its own `values.cue`.
 - **The released `opm` binary is dynamically linked against glibc**, so the image base is
-  `debian:trixie-slim`, not Alpine. The newest CLI tag is not necessarily installable either:
-  `v1.0.0-alpha.21` carries no release assets, so the pin is `v1.0.0-alpha.20`.
+  `debian:trixie-slim`, not Alpine. The pin is `v1.0.0-beta.2`: pin the `cli` tag whose
+  embedded operator matches the beta line (it decides the CRDs the Job installs), and only a
+  tag that carries release assets, since there is otherwise no tarball to install or checksum.
 
 ## Registry Policy
 
