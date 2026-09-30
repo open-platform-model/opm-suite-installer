@@ -7,9 +7,9 @@ it embeds (1.4 fallback, 2.1, 3.1, 3.2). If a gate lands on a different version 
 recorded gate version replaces it everywhere: every `beta.1`, `beta.2` and `4.4.4` written below is
 only the expected value (design D6).
 
-- [ ] G1 `opmodel.dev/core@v2` is on GHCR at the first core beta (expected v2.0.0-beta.1; record the real version: `________`)
-- [ ] G3 `opmodel.dev/catalogs/k8s@v1` first beta (expected v1.0.0-beta.1, tag k8s-v1.0.0-beta.1) and `opmodel.dev/catalogs/opm@v4` on core beta (expected v4.4.4, tag opm-v4.4.4) are on GHCR (record the real versions: k8s `________`, opm `________`)
-- [ ] G6 the first `cli` release embedding the first `opm-operator` beta exists (expected v1.0.0-beta.2; record the real tag: `________`, and the operator version it embeds: `________`) and carries `opm-linux-amd64.tar.gz`, `opm-linux-arm64.tar.gz` and `checksums.txt`
+- [x] G1 `opmodel.dev/core@v2` is on GHCR at the first core beta (expected v2.0.0-beta.1; record the real version: `v2.0.0-beta.1`)
+- [x] G3 `opmodel.dev/catalogs/k8s@v1` first beta (expected v1.0.0-beta.1, tag k8s-v1.0.0-beta.1) and `opmodel.dev/catalogs/opm@v4` on core beta (expected v4.4.4, tag opm-v4.4.4) are on GHCR (record the real versions: k8s `v1.0.0-beta.1`, opm `v4.4.4`)
+- [x] G6 the first `cli` release embedding the first `opm-operator` beta exists (expected v1.0.0-beta.2; record the real tag: `v1.0.0-beta.2`, and the operator version it embeds: `v1.0.0-beta.1`) and carries `opm-linux-amd64.tar.gz`, `opm-linux-arm64.tar.gz` and `checksums.txt`
 
 No supervisor patch applies: this repo is outside every root task (`deps:update`,
 `deps:pins:*`). All work below runs in the worktree
