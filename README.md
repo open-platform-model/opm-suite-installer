@@ -186,7 +186,7 @@ sequenceDiagram
   J->>J: select + validate apps, stage the working copy (same prelude as render)
   J->>J: no kubeconfig? write one from the mounted SA token (tokenFile)
   J->>O: opm operator install --crds-only
-  O->>K: SSA the three embedded CRDs, wait Established<br/>(no operator, no seeded Platform); fail = exit 71
+  O->>K: SSA the four embedded CRDs, wait Established<br/>(no operator, no seeded Platform); fail = exit 71
   loop each app, in order
     J->>K: GET moduleinstances/app<br/>404 = first install; spec.values = what a revert would restore
     J->>J: pre-apply hook, if present; non-zero = exit 76, nothing applied

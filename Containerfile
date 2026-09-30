@@ -11,13 +11,14 @@ FROM docker.io/library/debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46
 # The pinned CLI. An unpinned `opm` makes every finding in FINDINGS.md
 # unreproducible, so the version and its checksum are both literals here.
 #
-# v1.0.0-alpha.20 rather than the newest tag on purpose: v1.0.0-alpha.21 exists
-# but carries no release assets at all, so there is no tarball to install or to
-# checksum. The delta between the two is `opm platform check`, which this image
-# never calls.
-ARG OPM_VERSION=v1.0.0-alpha.20
-ARG OPM_SHA256_AMD64=2982d368229d8d8af8bf103cec13f3557c8131eee62bbb1cc609a2240b7298f5
-ARG OPM_SHA256_ARM64=4c636f838229c8c1907e555050d3c27f9915e14bffdfb9d2158aba4bf19b27f0
+# v1.0.0-beta.2 because it is the first `cli` release that embeds the
+# opm-operator beta (v1.0.0-beta.1): the CRDs `opm operator install --crds-only`
+# applies come from the embedded operator, so the pin follows the operator line,
+# not the newest `cli` tag. Only a tag that carries release assets can be pinned;
+# both checksums are copied from that release's checksums.txt.
+ARG OPM_VERSION=v1.0.0-beta.2
+ARG OPM_SHA256_AMD64=af0d55c8141a2fb7298d66685728efac0c784642dd0e077ccd752a6a07886431
+ARG OPM_SHA256_ARM64=ebe3f38175bfd20714178f7779c6d831738ab91953f9521db6db3dc69ca38be4
 # Set by the builder for the target platform; defaulted so a plain
 # `podman build .` on amd64 works with no arguments.
 ARG TARGETARCH=amd64

@@ -4,8 +4,8 @@
 // from a registry.
 //
 // cue.dev/x/k8s.io is here too. It is nobody's direct import in this repo, but
-// the k8s catalog needs it, and an unvendored transitive dependency is exactly
-// the kind of rot that only shows up in an airgapped run.
+// catalogs/opm needs it (the k8s catalog does not), and an unvendored transitive
+// dependency is exactly the kind of rot that only shows up in an airgapped run.
 //
 // The exact versions behind these paths are in ../vendor/VERSIONS, and
 // `task vendor:sync` is what refreshes them.

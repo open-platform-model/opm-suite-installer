@@ -5,10 +5,10 @@ import (
 	"strings"
 )
 
-// Schema-level pins for the contract inventory (enhancement 0015 D1, D2,
+// Schema-level pins for the contract inventory (0015:D1, D2,
 // D18): #ContractInventory and the #Platform.#contracts fold that derives it
 // from the enabled entries' contract maps and the required demands of
-// #composedTransformers. The enhancement ships no examples.cue for this
+// their transformers. The enhancement ships no examples.cue for this
 // slice, so the delta is exercised here.
 //
 // Companion to catalog_pins.cue and platform_and_match_pins.cue and written
@@ -21,14 +21,15 @@ import (
 // strings.Join over a sorted copy, so the pin states the exact members and
 // does not ride on registry iteration order.
 //
-// MUST-FAIL cases: none. The inventory reports and never refuses (D18), so
+// MUST-FAIL cases: none. The inventory reports and never refuses (0015:D18), so
 // there is no platform value this file could show being rejected; the
-// over-subscribed platform below is pinned EVALUATING, which is the property.
+// over-subscribed and colliding platforms below are pinned EVALUATING, which
+// is the property.
 //
 // As there, the filename must NOT begin with an underscore: CUE skips such
 // files, and every pin below would then vet clean by never running.
 
-// ─── Fixtures: three stand-in catalogs ──────────────────────────────────────
+// ─── Fixtures: eight stand-in catalogs ──────────────────────────────────────
 //
 // Shapes copied from catalog_opm and the provider design (0015 02-design.md);
 // `core` has no dependencies, so nothing is imported. Each member authors
@@ -36,7 +37,15 @@ import (
 // member per map plus the provider-fulfilled `backup` trait and ships one
 // adapter; the k8up-shaped catalog ships two adapters over `backup` (its
 // Schedule and PreBackupPod) and lists one contract of its own; the
-// velero-shaped catalog ships one adapter requiring `backup` alone.
+// velero-shaped catalog ships one adapter requiring `backup` alone. Two bare
+// k8up catalogs, at majors v2 and v3, each ship one PreBackupPod adapter
+// requiring `backup` alone and list nothing: the provider-count bug shapes
+// (two majors of one provider; two providers with the definer disabled or
+// absent). A restic-shaped catalog ships one adapter naming `backup` only as
+// an optional demand: consumption that is not provision. The base catalog at
+// majors v2 and v3 re-lists its keys (v2 adds a `volume` resource, v3 lists
+// only the container and `backup`), each shipping its own deployment
+// adapter: the collision shapes, two or three enabled definers of one key.
 
 _pinInventoryContainer: #Resource & {
 	metadata: {
@@ -174,7 +183,120 @@ _pinInventoryVeleroCatalog: #Catalog & {
 	#transformers: (_pinInventoryVeleroBackup.metadata.fqn): _pinInventoryVeleroBackup
 }
 
-// ─── The five platforms ─────────────────────────────────────────────────────
+// The two bug-shape provider catalogs: k8up at two majors, each shipping ONE
+// adapter that requires `backup` alone and listing no contract of its own.
+// Requiring only the provider contract keeps both out of every
+// catalog-fulfilled bucket, so `comparable` cannot confound the readout, and
+// listing nothing keeps the two majors out of `collisions`, so the readout
+// isolates the provider count.
+_pinInventoryK8upV2BareCatalog: #Catalog & {
+	metadata: {
+		modulePath: "opmodel.dev/catalogs/k8up@v2"
+		version:    "2.0.0"
+	}
+	#transformers: (_pinInventoryK8upPreBackupPod.metadata.fqn): _pinInventoryK8upPreBackupPod
+}
+
+_pinInventoryK8upV3PreBackupPod: #ComponentTransformer & {
+	metadata: {
+		name:        "pre-backup-pod"
+		fqn:         "opmodel.dev/catalogs/k8up/transformers/pre-backup-pod@3.0.0"
+		description: "Pin fixture: k8up v3's PreBackupPod adapter"
+	}
+	requiredTraits: (_pinInventoryBackup.metadata.fqn): _pinInventoryBackup
+}
+
+_pinInventoryK8upV3BareCatalog: #Catalog & {
+	metadata: {
+		modulePath: "opmodel.dev/catalogs/k8up@v3"
+		version:    "3.0.0"
+	}
+	#transformers: (_pinInventoryK8upV3PreBackupPod.metadata.fqn): _pinInventoryK8upV3PreBackupPod
+}
+
+// An adapter that names `backup` ONLY under optionalTraits and requires
+// nothing, so it sits in no catalog-fulfilled bucket and `comparable` cannot
+// confound the readout.
+_pinInventoryResticOptional: #ComponentTransformer & {
+	metadata: {
+		name:        "optional-backup"
+		fqn:         "opmodel.dev/catalogs/restic/transformers/optional-backup@1.0.0"
+		description: "Pin fixture: an adapter consuming backup optionally"
+	}
+	optionalTraits: (_pinInventoryBackup.metadata.fqn): _pinInventoryBackup
+}
+
+_pinInventoryResticCatalog: #Catalog & {
+	metadata: {
+		modulePath: "opmodel.dev/catalogs/restic@v1"
+		version:    "1.0.0"
+	}
+	#transformers: (_pinInventoryResticOptional.metadata.fqn): _pinInventoryResticOptional
+}
+
+// A resource only the base catalog's second major lists: the one key a
+// colliding platform still folds into `defined` and `definedBy`.
+_pinInventoryVolume: #Resource & {
+	metadata: {
+		name:       "volume"
+		apiVersion: "v1beta1"
+		fqn:        "opmodel.dev/catalogs/opm/resources/volume@v1beta1"
+	}
+	spec: volume: size: string
+}
+
+// The base catalog's adapter at majors v2 and v3. Each requires the
+// container alone, so its predicate equals deployment@1.0.0's.
+_pinInventoryDeploymentV2: #ComponentTransformer & {
+	metadata: {
+		name:        "deployment"
+		fqn:         "opmodel.dev/catalogs/opm/transformers/deployment@2.0.0"
+		description: "Pin fixture: the base catalog's adapter at major v2"
+	}
+	requiredResources: (_pinInventoryContainer.metadata.fqn): _pinInventoryContainer
+}
+
+_pinInventoryDeploymentV3: #ComponentTransformer & {
+	metadata: {
+		name:        "deployment"
+		fqn:         "opmodel.dev/catalogs/opm/transformers/deployment@3.0.0"
+		description: "Pin fixture: the base catalog's adapter at major v3"
+	}
+	requiredResources: (_pinInventoryContainer.metadata.fqn): _pinInventoryContainer
+}
+
+// The base catalog at major v2: its four keys plus `volume`, shipping its
+// own adapter. Beside major v1 every shared key is a collision.
+_pinInventoryBaseV2Catalog: #Catalog & {
+	metadata: {
+		modulePath: "opmodel.dev/catalogs/opm@v2"
+		version:    "2.0.0"
+	}
+	#resources: {
+		(_pinInventoryContainer.metadata.fqn): _pinInventoryContainer
+		(_pinInventoryVolume.metadata.fqn):    _pinInventoryVolume
+	}
+	#traits: {
+		(_pinInventoryScaling.metadata.fqn): _pinInventoryScaling
+		(_pinInventoryBackup.metadata.fqn):  _pinInventoryBackup
+	}
+	#blueprints: (_pinInventoryStateless.metadata.fqn):      _pinInventoryStateless
+	#transformers: (_pinInventoryDeploymentV2.metadata.fqn): _pinInventoryDeploymentV2
+}
+
+// The base catalog at major v3, listing only the container and `backup`,
+// so a three-major platform has keys at three definers and at two.
+_pinInventoryBaseV3Catalog: #Catalog & {
+	metadata: {
+		modulePath: "opmodel.dev/catalogs/opm@v3"
+		version:    "3.0.0"
+	}
+	#resources: (_pinInventoryContainer.metadata.fqn):       _pinInventoryContainer
+	#traits: (_pinInventoryBackup.metadata.fqn):             _pinInventoryBackup
+	#transformers: (_pinInventoryDeploymentV3.metadata.fqn): _pinInventoryDeploymentV3
+}
+
+// ─── The thirteen platforms ─────────────────────────────────────────────────
 
 _pinInventoryEmpty: #Platform & {
 	metadata: name: "empty"
@@ -218,11 +340,113 @@ _pinInventoryDisabledProvider: #Platform & {
 	}
 }
 
+// Bug 1: two majors of one provider catalog, beside the defining catalog.
+_pinInventoryTwoMajors: #Platform & {
+	metadata: name: "two-majors"
+	type: "kubernetes"
+	#registry: {
+		(_pinInventoryBaseCatalog.metadata.modulePath): #catalog:       _pinInventoryBaseCatalog
+		(_pinInventoryK8upV2BareCatalog.metadata.modulePath): #catalog: _pinInventoryK8upV2BareCatalog
+		(_pinInventoryK8upV3BareCatalog.metadata.modulePath): #catalog: _pinInventoryK8upV3BareCatalog
+	}
+}
+
+// Bug 2: two providers while the defining catalog is present and disabled...
+_pinInventoryDefinerDisabled: #Platform & {
+	metadata: name: "definer-disabled"
+	type: "kubernetes"
+	#registry: {
+		(_pinInventoryBaseCatalog.metadata.modulePath): {
+			enable:   false
+			#catalog: _pinInventoryBaseCatalog
+		}
+		(_pinInventoryK8upV2BareCatalog.metadata.modulePath): #catalog: _pinInventoryK8upV2BareCatalog
+		(_pinInventoryVeleroCatalog.metadata.modulePath): #catalog:     _pinInventoryVeleroCatalog
+	}
+}
+
+// ...and while it is absent from the registry altogether.
+_pinInventoryDefinerAbsent: #Platform & {
+	metadata: name: "definer-absent"
+	type: "kubernetes"
+	#registry: {
+		(_pinInventoryK8upV2BareCatalog.metadata.modulePath): #catalog: _pinInventoryK8upV2BareCatalog
+		(_pinInventoryVeleroCatalog.metadata.modulePath): #catalog:     _pinInventoryVeleroCatalog
+	}
+}
+
+// The defining catalog beside an entry whose only adapter names `backup` as
+// an optional demand.
+_pinInventoryOptionalOnly: #Platform & {
+	metadata: name: "optional-only"
+	type: "kubernetes"
+	#registry: {
+		(_pinInventoryBaseCatalog.metadata.modulePath): #catalog:   _pinInventoryBaseCatalog
+		(_pinInventoryResticCatalog.metadata.modulePath): #catalog: _pinInventoryResticCatalog
+	}
+}
+
+// Two majors of the base catalog, both enabled, sharing four keys.
+_pinInventoryCollide: #Platform & {
+	metadata: name: "collide"
+	type: "kubernetes"
+	#registry: {
+		(_pinInventoryBaseCatalog.metadata.modulePath): #catalog:   _pinInventoryBaseCatalog
+		(_pinInventoryBaseV2Catalog.metadata.modulePath): #catalog: _pinInventoryBaseV2Catalog
+	}
+}
+
+// The same two majors with the second disabled: nothing collides.
+_pinInventoryCollideDisabled: #Platform & {
+	metadata: name: "collide-disabled"
+	type: "kubernetes"
+	#registry: {
+		(_pinInventoryBaseCatalog.metadata.modulePath): #catalog: _pinInventoryBaseCatalog
+		(_pinInventoryBaseV2Catalog.metadata.modulePath): {
+			enable:   false
+			#catalog: _pinInventoryBaseV2Catalog
+		}
+	}
+}
+
+// The colliding majors plus two providers of `backup`: a collision and an
+// over-subscription reported together.
+_pinInventoryCollideOverSubscribed: #Platform & {
+	metadata: name: "collide-over-subscribed"
+	type: "kubernetes"
+	#registry: {
+		(_pinInventoryBaseCatalog.metadata.modulePath): #catalog:       _pinInventoryBaseCatalog
+		(_pinInventoryBaseV2Catalog.metadata.modulePath): #catalog:     _pinInventoryBaseV2Catalog
+		(_pinInventoryK8upV2BareCatalog.metadata.modulePath): #catalog: _pinInventoryK8upV2BareCatalog
+		(_pinInventoryVeleroCatalog.metadata.modulePath): #catalog:     _pinInventoryVeleroCatalog
+	}
+}
+
+// Three majors of the base catalog: two keys at three definers, two at two.
+_pinInventoryCollideThreeMajors: #Platform & {
+	metadata: name: "collide-three-majors"
+	type: "kubernetes"
+	#registry: {
+		(_pinInventoryBaseCatalog.metadata.modulePath): #catalog:   _pinInventoryBaseCatalog
+		(_pinInventoryBaseV2Catalog.metadata.modulePath): #catalog: _pinInventoryBaseV2Catalog
+		(_pinInventoryBaseV3Catalog.metadata.modulePath): #catalog: _pinInventoryBaseV3Catalog
+	}
+}
+
 // One readout per platform. Lists join over a sorted copy; an empty list
 // joins to "". Interpolation forces every value (the ONE RULE).
 _pinInventoryReadout: {
 	#in: #ContractInventory
 	out: "defined=\(len(#in.defined)) unfulfilled=[\(strings.Join(list.Sort(#in.unfulfilled, list.Ascending), ","))] overSubscribed=[\(strings.Join(list.Sort(#in.overSubscribed, list.Ascending), ","))] fulfilled=\(#in.fulfilled) routable=\(#in.routable) comparable=\(len(#in.comparable)) discriminated=\(#in.discriminated)"
+}
+
+// The collision report per platform. `collisions` is joined WITHOUT
+// re-sorting, so the pin also holds the list's own order; each key is
+// followed by its colliding entries, joined in their own order; `entries`
+// holds that collidingEntries carries colliding keys only.
+_pinInventoryCollisionReadout: {
+	#in: #ContractInventory
+	out: "collisions=[\(strings.Join(#in.collisions, ","))] collidingEntries=[\(strings.Join([for k in #in.collisions {"\(k)=\(strings.Join(#in.collidingEntries[k], "+"))"}], ";"))] entries=\(len(#in.collidingEntries)) routable=\(#in.routable)"
 }
 
 // ─── Empty registry: every map and list empty, both booleans true ───────────
@@ -231,6 +455,14 @@ _pinInventoryEmptyReadout: (_pinInventoryReadout & {#in: _pinInventoryEmpty.#con
 _pinInventoryEmptyReadout: "defined=0 unfulfilled=[] overSubscribed=[] fulfilled=true routable=true comparable=0 discriminated=true"
 _pinInventoryEmptyMaps:    "\(len(_pinInventoryEmpty.#contracts.definedBy))\(len(_pinInventoryEmpty.#contracts.requiredBy))"
 _pinInventoryEmptyMaps:    "00"
+
+// No entry, no provider: providedBy is empty too.
+_pinInventoryEmptyProvidedBy: "\(len(_pinInventoryEmpty.#contracts.providedBy))"
+_pinInventoryEmptyProvidedBy: "0"
+
+// No entry, no definer: nothing collides.
+_pinInventoryEmptyCollisions: (_pinInventoryCollisionReadout & {#in: _pinInventoryEmpty.#contracts}).out
+_pinInventoryEmptyCollisions: "collisions=[] collidingEntries=[] entries=0 routable=true"
 
 // ─── Base only: `backup` is defined, required by nothing, unfulfilled ───────
 //
@@ -258,11 +490,20 @@ _pinInventoryBaseOnlyDefined: "provider@opmodel.dev/catalogs/opm/traits/v1alpha1
 _pinInventoryBaseOnlyRequiredBy: "\(strings.Join(_pinInventoryBaseOnly.#contracts.requiredBy["opmodel.dev/catalogs/opm/resources/container@v1beta1"], ","))|\(len(_pinInventoryBaseOnly.#contracts.requiredBy["opmodel.dev/catalogs/opm/traits/scaling@v1beta1"]))|\(len(_pinInventoryBaseOnly.#contracts.requiredBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"]))"
 _pinInventoryBaseOnlyRequiredBy: "opmodel.dev/catalogs/opm/transformers/deployment@1.0.0|0|0"
 
-// ─── One provider: k8up's two adapters count as ONE catalog ─────────────────
+// `backup` is defined and provided by nobody: no providedBy key at all, which
+// is exactly what makes it unfulfilled.
+_pinInventoryBaseOnlyProvidedBy: "\(len(_pinInventoryBaseOnly.#contracts.providedBy))"
+_pinInventoryBaseOnlyProvidedBy: "0"
+
+// One major: every key has a single definer, so nothing collides.
+_pinInventoryBaseOnlyCollisions: (_pinInventoryCollisionReadout & {#in: _pinInventoryBaseOnly.#contracts}).out
+_pinInventoryBaseOnlyCollisions: "collisions=[] collidingEntries=[] entries=0 routable=true"
+
+// ─── One provider: k8up's two adapters count as ONE registry entry ─────────
 //
 // Five members (k8up lists `retention`); `backup` is required by both k8up
-// adapters, and because over-subscription counts catalogs through the
-// stamped modulePath, two adapters of one catalog are one provider.
+// adapters, and because over-subscription counts registry entries, two
+// adapters of one entry are one provider.
 
 _pinInventoryOneProviderReadout: (_pinInventoryReadout & {#in: _pinInventoryOneProvider.#contracts}).out
 _pinInventoryOneProviderReadout: "defined=5 unfulfilled=[] overSubscribed=[] fulfilled=true routable=true comparable=1 discriminated=false"
@@ -277,9 +518,15 @@ _pinInventoryOneProviderContainer: "opmodel.dev/catalogs/k8up/transformers/sched
 _pinInventoryOneProviderDefinedBy: "\(_pinInventoryOneProvider.#contracts.definedBy["opmodel.dev/catalogs/k8up/traits/retention@v1alpha1"])"
 _pinInventoryOneProviderDefinedBy: "opmodel.dev/catalogs/k8up@v2"
 
+// providedBy names the registry key once, however many of its transformers
+// require the contract. Joined without re-sorting, so the pin also holds
+// the list's own order.
+_pinInventoryOneProviderProvidedBy: "\(len(_pinInventoryOneProvider.#contracts.providedBy))|\(strings.Join(_pinInventoryOneProvider.#contracts.providedBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"], ","))"
+_pinInventoryOneProviderProvidedBy: "1|opmodel.dev/catalogs/k8up@v2"
+
 // ─── Two providers: over-subscribed, and the value STILL EVALUATES ──────────
 //
-// This is D18's whole point pinned: `routable: false` is a value a caller
+// This is 0015:D18's whole point pinned: `routable: false` is a value a caller
 // reads, not a bottom. #composedTransformers is intact beside it, and the
 // report names the contract.
 
@@ -292,6 +539,9 @@ _pinInventoryTwoProvidersRequiredBy: "opmodel.dev/catalogs/k8up/transformers/pre
 _pinInventoryTwoProvidersIntact: "\(len(_pinInventoryTwoProviders.#composedTransformers))|\(_pinInventoryTwoProviders.#contracts.definedBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"])"
 _pinInventoryTwoProvidersIntact: "4|opmodel.dev/catalogs/opm@v1"
 
+_pinInventoryTwoProvidersProvidedBy: "\(len(_pinInventoryTwoProviders.#contracts.providedBy))|\(strings.Join(_pinInventoryTwoProviders.#contracts.providedBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"], ","))"
+_pinInventoryTwoProvidersProvidedBy: "1|opmodel.dev/catalogs/k8up@v2,opmodel.dev/catalogs/velero@v1"
+
 // ─── Disabled provider: reads exactly as base only ──────────────────────────
 //
 // The k8up entry is present in the file and contributes nothing: not its
@@ -303,6 +553,56 @@ _pinInventoryDisabledProviderReadout: "defined=4 unfulfilled=[opmodel.dev/catalo
 
 _pinInventoryDisabledProviderAbsent: "\(_pinInventoryDisabledProvider.#contracts.definedBy["opmodel.dev/catalogs/k8up/traits/retention@v1alpha1"] == _|_)|\(len(_pinInventoryDisabledProvider.#contracts.requiredBy["opmodel.dev/catalogs/opm/resources/container@v1beta1"]))|\(len(_pinInventoryDisabledProvider.#contracts.requiredBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"]))"
 _pinInventoryDisabledProviderAbsent: "true|1|0"
+
+// A disabled entry provides nothing: its adapters' `backup` demand is not a key.
+_pinInventoryDisabledProviderProvidedBy: "\(len(_pinInventoryDisabledProvider.#contracts.providedBy))"
+_pinInventoryDisabledProviderProvidedBy: "0"
+
+// ─── Two majors of one provider catalog: TWO providers ──────────────────────
+//
+// k8up@v2 and k8up@v3 each ship one adapter over `backup`. Their transformers'
+// stamped metadata.modulePath is major-free, so a count keyed by it would see
+// one catalog; the count is keyed by registry key, as the render build's is,
+// so the platform is over-subscribed and not routable.
+
+_pinInventoryTwoMajorsReadout: (_pinInventoryReadout & {#in: _pinInventoryTwoMajors.#contracts}).out
+_pinInventoryTwoMajorsReadout: "defined=4 unfulfilled=[] overSubscribed=[opmodel.dev/catalogs/opm/traits/backup@v1alpha1] fulfilled=true routable=false comparable=0 discriminated=true"
+
+_pinInventoryTwoMajorsProvidedBy: "\(len(_pinInventoryTwoMajors.#contracts.providedBy))|\(strings.Join(_pinInventoryTwoMajors.#contracts.providedBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"], ","))"
+_pinInventoryTwoMajorsProvidedBy: "1|opmodel.dev/catalogs/k8up@v2,opmodel.dev/catalogs/k8up@v3"
+
+// ─── Two providers, defining catalog disabled or absent ─────────────────────
+//
+// Nothing enabled defines `backup`, so `defined`, `definedBy` and `requiredBy`
+// are empty; the two providers still count, because fulfilment is read off
+// each transformer's own requirement and not off the defining member.
+
+_pinInventoryDefinerDisabledReadout: (_pinInventoryReadout & {#in: _pinInventoryDefinerDisabled.#contracts}).out
+_pinInventoryDefinerDisabledReadout: "defined=0 unfulfilled=[] overSubscribed=[opmodel.dev/catalogs/opm/traits/backup@v1alpha1] fulfilled=true routable=false comparable=0 discriminated=true"
+
+_pinInventoryDefinerDisabledMaps: "\(len(_pinInventoryDefinerDisabled.#contracts.definedBy))\(len(_pinInventoryDefinerDisabled.#contracts.requiredBy))"
+_pinInventoryDefinerDisabledMaps: "00"
+
+_pinInventoryDefinerDisabledProvidedBy: "\(len(_pinInventoryDefinerDisabled.#contracts.providedBy))|\(strings.Join(_pinInventoryDefinerDisabled.#contracts.providedBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"], ","))"
+_pinInventoryDefinerDisabledProvidedBy: "1|opmodel.dev/catalogs/k8up@v2,opmodel.dev/catalogs/velero@v1"
+
+_pinInventoryDefinerAbsentReadout: (_pinInventoryReadout & {#in: _pinInventoryDefinerAbsent.#contracts}).out
+_pinInventoryDefinerAbsentReadout: "defined=0 unfulfilled=[] overSubscribed=[opmodel.dev/catalogs/opm/traits/backup@v1alpha1] fulfilled=true routable=false comparable=0 discriminated=true"
+
+_pinInventoryDefinerAbsentProvidedBy: "\(len(_pinInventoryDefinerAbsent.#contracts.providedBy))|\(strings.Join(_pinInventoryDefinerAbsent.#contracts.providedBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"], ","))"
+_pinInventoryDefinerAbsentProvidedBy: "1|opmodel.dev/catalogs/k8up@v2,opmodel.dev/catalogs/velero@v1"
+
+// ─── Optional demands do not count as provision ─────────────────────────────
+//
+// The restic entry's adapter names `backup` only under optionalTraits, so it
+// is not a provider: providedBy has no `backup` key and the readout is base
+// only's, `backup` unfulfilled and the platform still routable.
+
+_pinInventoryOptionalOnlyReadout: (_pinInventoryReadout & {#in: _pinInventoryOptionalOnly.#contracts}).out
+_pinInventoryOptionalOnlyReadout: "defined=4 unfulfilled=[opmodel.dev/catalogs/opm/traits/backup@v1alpha1] overSubscribed=[] fulfilled=false routable=true comparable=0 discriminated=true"
+
+_pinInventoryOptionalOnlyProvidedBy: "\(len(_pinInventoryOptionalOnly.#contracts.providedBy))|\(_pinInventoryOptionalOnly.#contracts.providedBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"] == _|_)"
+_pinInventoryOptionalOnlyProvidedBy: "0|true"
 
 // ─── The presence guards ────────────────────────────────────────────────────
 //
@@ -355,7 +655,84 @@ _pinInventoryWithMatchersRequiredBy: _pinInventoryOneProviderRequiredBy
 _pinInventoryBare: (_pinInventoryReadout & {#in: #Platform.#contracts}).out
 _pinInventoryBare: "defined=0 unfulfilled=[] overSubscribed=[] fulfilled=true routable=true comparable=0 discriminated=true"
 
-// ─── Fixtures: the comparability report (0015 D5, OQ9) ──────────────────────
+_pinInventoryBareProvidedBy: "\(len(#Platform.#contracts.providedBy))"
+_pinInventoryBareProvidedBy: "0"
+
+_pinInventoryBareCollisions: (_pinInventoryCollisionReadout & {#in: #Platform.#contracts}).out
+_pinInventoryBareCollisions: "collisions=[] collidingEntries=[] entries=0 routable=true"
+
+// ─── Two majors sharing keys: collisions, and the value STILL EVALUATES ─────
+//
+// opm@v1 and opm@v2 both list the container, scaling, backup and the
+// stateless blueprint. Folding a key two enabled entries list conflicted on
+// metadata.catalogVersion in `defined` and on the registry key in
+// `definedBy`, so the whole platform was bottom. Only single-definer keys
+// fold now; the rest are reported, and the platform is not routable.
+
+// Existing fields only: red before the fold, green after it.
+_pinInventoryCollideIntact: "routable=\(_pinInventoryCollide.#contracts.routable) composed=\(len(_pinInventoryCollide.#composedTransformers))"
+_pinInventoryCollideIntact: "routable=false composed=2"
+
+// Only `volume`, which opm@v2 alone lists, is defined; nothing is
+// over-subscribed, yet the platform is not routable.
+_pinInventoryCollideReadout: (_pinInventoryReadout & {#in: _pinInventoryCollide.#contracts}).out
+_pinInventoryCollideReadout: "defined=1 unfulfilled=[] overSubscribed=[] fulfilled=true routable=false comparable=0 discriminated=true"
+
+// Every shared key, sorted, each naming both majors' registry keys.
+_pinInventoryCollideCollisions: (_pinInventoryCollisionReadout & {#in: _pinInventoryCollide.#contracts}).out
+_pinInventoryCollideCollisions: "collisions=[opmodel.dev/catalogs/opm/blueprints/stateless-workload@v1alpha1,opmodel.dev/catalogs/opm/resources/container@v1beta1,opmodel.dev/catalogs/opm/traits/backup@v1alpha1,opmodel.dev/catalogs/opm/traits/scaling@v1beta1] collidingEntries=[opmodel.dev/catalogs/opm/blueprints/stateless-workload@v1alpha1=opmodel.dev/catalogs/opm@v1+opmodel.dev/catalogs/opm@v2;opmodel.dev/catalogs/opm/resources/container@v1beta1=opmodel.dev/catalogs/opm@v1+opmodel.dev/catalogs/opm@v2;opmodel.dev/catalogs/opm/traits/backup@v1alpha1=opmodel.dev/catalogs/opm@v1+opmodel.dev/catalogs/opm@v2;opmodel.dev/catalogs/opm/traits/scaling@v1beta1=opmodel.dev/catalogs/opm@v1+opmodel.dev/catalogs/opm@v2] entries=4 routable=false"
+
+// The key only the second major lists folds as before: defined by opm@v2,
+// required by nothing.
+_pinInventoryCollideDefinedBy: "\(len(_pinInventoryCollide.#contracts.definedBy))|\(_pinInventoryCollide.#contracts.definedBy["opmodel.dev/catalogs/opm/resources/volume@v1beta1"])|\(len(_pinInventoryCollide.#contracts.requiredBy["opmodel.dev/catalogs/opm/resources/volume@v1beta1"]))"
+_pinInventoryCollideDefinedBy: "1|opmodel.dev/catalogs/opm@v2|0"
+
+// LIMITATION PIN. This pins a known blind spot on purpose: a colliding key
+// leaves `defined`, so it also leaves `requiredBy`, `unfulfilled` and
+// `comparable`. `backup` is unfulfilled on base only (fulfilled=false
+// above), and deployment@1.0.0 and deployment@2.0.0 share equal predicates
+// over the container, yet this platform reads fulfilled=true and
+// discriminated=true; only routable=false tells the truth. A future fix
+// that keys the reports over colliding keys changes this pin DELIBERATELY.
+_pinInventoryCollideLimitation: "\(_pinInventoryCollide.#contracts.requiredBy["opmodel.dev/catalogs/opm/resources/container@v1beta1"] == _|_)|\(_pinInventoryCollide.#contracts.requiredBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"] == _|_)|\(_pinInventoryCollide.#contracts.fulfilled)|\(_pinInventoryCollide.#contracts.discriminated)|\(_pinInventoryCollide.#contracts.routable)"
+_pinInventoryCollideLimitation: "true|true|true|true|false"
+
+// ─── A disabled second major: reads exactly as base only ────────────────────
+//
+// A disabled entry is never a definer, so nothing collides and its `volume`
+// is not defined.
+
+_pinInventoryCollideDisabledReadout: (_pinInventoryReadout & {#in: _pinInventoryCollideDisabled.#contracts}).out
+_pinInventoryCollideDisabledReadout: _pinInventoryBaseOnlyReadout
+
+_pinInventoryCollideDisabledCollisions: "\((_pinInventoryCollisionReadout & {#in: _pinInventoryCollideDisabled.#contracts}).out)|\(_pinInventoryCollideDisabled.#contracts.definedBy["opmodel.dev/catalogs/opm/resources/volume@v1beta1"] == _|_)"
+_pinInventoryCollideDisabledCollisions: "collisions=[] collidingEntries=[] entries=0 routable=true|true"
+
+// ─── A collision and an over-subscription, reported together ────────────────
+//
+// providedBy and overSubscribed are unaffected by collisions: `backup` is
+// both a colliding key and over-subscribed by k8up@v2 and velero@v1.
+
+_pinInventoryCollideOverSubscribedReadout: (_pinInventoryReadout & {#in: _pinInventoryCollideOverSubscribed.#contracts}).out
+_pinInventoryCollideOverSubscribedReadout: "defined=1 unfulfilled=[] overSubscribed=[opmodel.dev/catalogs/opm/traits/backup@v1alpha1] fulfilled=true routable=false comparable=0 discriminated=true"
+
+_pinInventoryCollideOverSubscribedCollisions: (_pinInventoryCollisionReadout & {#in: _pinInventoryCollideOverSubscribed.#contracts}).out
+_pinInventoryCollideOverSubscribedCollisions: _pinInventoryCollideCollisions
+
+_pinInventoryCollideOverSubscribedProvidedBy: "\(strings.Join(_pinInventoryCollideOverSubscribed.#contracts.providedBy["opmodel.dev/catalogs/opm/traits/backup@v1alpha1"], ","))|\(len(_pinInventoryCollideOverSubscribed.#composedTransformers))"
+_pinInventoryCollideOverSubscribedProvidedBy: "opmodel.dev/catalogs/k8up@v2,opmodel.dev/catalogs/velero@v1|4"
+
+// ─── Three majors: each key names every major listing it ────────────────────
+
+_pinInventoryCollideThreeMajorsCollisions: (_pinInventoryCollisionReadout & {#in: _pinInventoryCollideThreeMajors.#contracts}).out
+_pinInventoryCollideThreeMajorsCollisions: "collisions=[opmodel.dev/catalogs/opm/blueprints/stateless-workload@v1alpha1,opmodel.dev/catalogs/opm/resources/container@v1beta1,opmodel.dev/catalogs/opm/traits/backup@v1alpha1,opmodel.dev/catalogs/opm/traits/scaling@v1beta1] collidingEntries=[opmodel.dev/catalogs/opm/blueprints/stateless-workload@v1alpha1=opmodel.dev/catalogs/opm@v1+opmodel.dev/catalogs/opm@v2;opmodel.dev/catalogs/opm/resources/container@v1beta1=opmodel.dev/catalogs/opm@v1+opmodel.dev/catalogs/opm@v2+opmodel.dev/catalogs/opm@v3;opmodel.dev/catalogs/opm/traits/backup@v1alpha1=opmodel.dev/catalogs/opm@v1+opmodel.dev/catalogs/opm@v2+opmodel.dev/catalogs/opm@v3;opmodel.dev/catalogs/opm/traits/scaling@v1beta1=opmodel.dev/catalogs/opm@v1+opmodel.dev/catalogs/opm@v2] entries=4 routable=false"
+
+// `volume` is the only single-definer key, so defined and definedBy hold it
+// alone.
+_pinInventoryCollideThreeMajorsDefinedBy: "\(_pinInventoryCollideThreeMajors.#contracts.definedBy["opmodel.dev/catalogs/opm/resources/volume@v1beta1"])|\(len(_pinInventoryCollideThreeMajors.#contracts.defined))|\(len(_pinInventoryCollideThreeMajors.#contracts.definedBy))|\(len(_pinInventoryCollideThreeMajors.#composedTransformers))"
+_pinInventoryCollideThreeMajorsDefinedBy: "opmodel.dev/catalogs/opm@v2|1|1|3"
+
+// ─── Fixtures: the comparability report (0015:D5, OQ9) ──────────────────────
 //
 // A second, independent family, so the platforms above keep reading as the
 // over-subscription story. One definition catalog lists the two
@@ -453,7 +830,7 @@ _pinCmpAlphaCatalog: (_pinCmpOne & {#name: "alpha", #demands: {
 }}).out
 
 // Identical predicate to alpha's, from a second catalog: the accidental
-// two-catalogs-one-adapter case D5 exists for.
+// two-catalogs-one-adapter case 0015:D5 exists for.
 _pinCmpBetaCatalog: (_pinCmpOne & {#name: "beta", #demands: {
 	requiredResources: (_pinCmpWidget.metadata.fqn): _pinCmpWidget
 }}).out
@@ -479,7 +856,7 @@ _pinCmpEpsilonCatalog: (_pinCmpOne & {#name: "epsilon", #demands: {
 }}).out
 
 // The same trait, declared OPTIONAL: predicate is the resource alone, so
-// zeta reads exactly as alpha does (0010 D32).
+// zeta reads exactly as alpha does (0010:D32).
 _pinCmpZetaCatalog: (_pinCmpOne & {#name: "zeta", #demands: {
 	requiredResources: (_pinCmpWidget.metadata.fqn): _pinCmpWidget
 	optionalTraits: (_pinCmpTuning.metadata.fqn):    _pinCmpTuning
@@ -604,7 +981,7 @@ _pinCmpRows: {
 _pinCmpIdenticalRows: (_pinCmpRows & {#in: _pinCmpIdentical.#contracts}).out
 _pinCmpIdenticalRows: "opmodel.dev/catalogs/cmp-alpha/transformers/alpha@1.0.0>opmodel.dev/catalogs/cmp-beta/transformers/beta@1.0.0@[opmodel.dev/catalogs/cmp-base/resources/widget@v1beta1]"
 
-// 0015 D18 on the new report: an undiscriminated platform STILL EVALUATES.
+// 0015:D18 on the new report: an undiscriminated platform STILL EVALUATES.
 // The composed fold is intact and both transformer FQNs read back off the row.
 _pinCmpIdenticalEvaluates: "\(len(_pinCmpIdentical.#composedTransformers))|\(_pinCmpIdentical.#contracts.discriminated)|\(_pinCmpIdentical.#contracts.comparable[0].broader)|\(_pinCmpIdentical.#contracts.comparable[0].narrower)|\(len(_pinCmpIdentical.#contracts.comparable[0].contracts))"
 _pinCmpIdenticalEvaluates: "2|false|opmodel.dev/catalogs/cmp-alpha/transformers/alpha@1.0.0|opmodel.dev/catalogs/cmp-beta/transformers/beta@1.0.0|1"

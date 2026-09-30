@@ -55,8 +55,8 @@ mkdir -p vendor
 
 while read -r dep version; do
 	[ -n "$dep" ] || continue
-	# "opmodel.dev/core@v2" + "v2.0.0-alpha.10" -> extract path
-	# "opmodel.dev/core@v2.0.0-alpha.10". The vendor tree keeps the MAJOR
+	# "opmodel.dev/core@v2" + "v2.0.0-beta.1" -> extract path
+	# "opmodel.dev/core@v2.0.0-beta.1". The vendor tree keeps the MAJOR
 	# path so the replacements in cue.mod/local-module.cue never move; the
 	# exact version lives in vendor/VERSIONS.
 	src="$cache/mod/extract/${dep%@*}@${version}"
