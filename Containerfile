@@ -46,7 +46,7 @@ RUN set -eu; \
 
 # The bundle and everything it resolves against, at the D7 paths. The sibling
 # layout matters: bundle/cue.mod/local-module.cue redirects the bundled module
-# to ../modules/podinfo and the platform redirects core and the catalogs to
+# to ../modules/podinfo and the platform redirects core and the catalog to
 # ../vendor/..., so bundle, modules, platform and vendor must stay siblings.
 #
 # Note what is NOT set anywhere in this image: CUE_REGISTRY. Nothing here is
