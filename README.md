@@ -171,7 +171,7 @@ flowchart LR
   bmod -->|"local-module.cue<br/>replaceWith ../modules/podinfo"| pod["modules/podinfo<br/>(bundled #Module)"]
   bmod -->|"redirect core + catalog<br/>(opm says 'ignored', still required)"| vendor
   plat["platform/platform.cue<br/>(baked #Platform, passed as --platform)"] --> pmod["platform/cue.mod"]
-  pmod -->|"local-module.cue"| vendor["vendor/<br/>opmodel.dev/core@v2<br/>opmodel.dev/catalogs/opm@v4<br/>opmodel.dev/catalogs/k8s@v1<br/>cue.dev/x/k8s.io@v0"]
+  pmod -->|"local-module.cue"| vendor["vendor/<br/>opmodel.dev/core@v2<br/>opmodel.dev/catalogs/opm@v4<br/>cue.dev/x/k8s.io@v0"]
   pod --> vendor
   reg[("GHCR / registry.cue.works")] -. "never at runtime:<br/>image sets no CUE_REGISTRY,<br/>a fetch fails loudly" .-> vendor
 ```
@@ -237,7 +237,7 @@ For a full local OPM demo with Flux and a local registry, see `opm-kind-demo`.
 
 ## Offline by construction, not by cache
 
-`vendor/` holds the committed CUE source of `core`, both catalogs and `cue.dev/x/k8s.io`, and
+`vendor/` holds the committed CUE source of `core`, the opm catalog and `cue.dev/x/k8s.io`, and
 `cue.mod/local-module.cue` redirects every dependency there. Nothing resolves from a registry, at
 build time or at run time. An image that is offline only because someone's CUE cache happened to be
 warm is not offline; the empty-cache assertion in `task image:render` is what tells the two apart.
