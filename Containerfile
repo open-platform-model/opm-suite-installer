@@ -6,19 +6,21 @@
 # (`interpreter /lib64/ld-linux-x86-64.so.2`, `libc.so.6`), so it does not run
 # on musl. D8 named debian:trixie-slim as the fallback for exactly this, and
 # nothing else in the design changes. See FINDINGS.md.
-FROM docker.io/library/debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
+FROM docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
 # The pinned CLI. An unpinned `opm` makes every finding in FINDINGS.md
 # unreproducible, so the version and its checksum are both literals here.
 #
-# v1.0.0-beta.2 because it is the first `cli` release that embeds the
-# opm-operator beta (v1.0.0-beta.1): the CRDs `opm operator install --crds-only`
-# applies come from the embedded operator, so the pin follows the operator line,
-# not the newest `cli` tag. Only a tag that carries release assets can be pinned;
-# both checksums are copied from that release's checksums.txt.
-ARG OPM_VERSION=v1.0.0-beta.2
-ARG OPM_SHA256_AMD64=af0d55c8141a2fb7298d66685728efac0c784642dd0e077ccd752a6a07886431
-ARG OPM_SHA256_ARM64=ebe3f38175bfd20714178f7779c6d831738ab91953f9521db6db3dc69ca38be4
+# v1.0.0-beta.9 because it is the newest `cli` release that still embeds the
+# operator manifest (opm-operator v1.0.0-beta.7): the CRDs
+# `opm operator install --crds-only` applies come from that embedded copy, which
+# needs no network. v1.0.0-beta.10 renders the operator from its CUE module
+# instead, a registry fetch this image cannot make, so the pin stays below it
+# until that path works offline. Only a tag that carries release assets can be
+# pinned; both checksums are copied from that release's checksums.txt.
+ARG OPM_VERSION=v1.0.0-beta.9
+ARG OPM_SHA256_AMD64=1391ffd74984c7490a22d2c8f0b1adea20691c7f8b6afed2e029df4efe68136e
+ARG OPM_SHA256_ARM64=4ea0bb8ef146359d107d73206938221a7ed51af38f4e1c223f8f76cb0b94688b
 # Set by the builder for the target platform; defaulted so a plain
 # `podman build .` on amd64 works with no arguments.
 ARG TARGETARCH=amd64
