@@ -29,6 +29,26 @@ cache warmth, and the vendored tree is a tenth the size and reviewable in a diff
 
 ## Entries
 
+## 2026-10-06: `opm` v1.0.0-beta.10 drops the embedded operator manifest
+
+**Tried.** Bumping `opm` from v1.0.0-beta.2 to the newest `cli` release, v1.0.0-beta.10, and the
+`debian:trixie-slim` digest to the current one.
+
+**Happened.** v1.0.0-beta.10 (cli#307, a breaking change) deletes
+`internal/operator/dist/install.yaml`: `opm operator install`, `--crds-only` included, now renders
+the operator from its CUE module (`PinnedModuleVersion` 0.1.0, deploying opm-operator
+v1.0.0-beta.8). That is a registry resolution, and this image sets no `CUE_REGISTRY` and vendors
+no operator module, so the Job's CRD bootstrap would no longer be offline. `task check` cannot
+see it: `image:render` never installs CRDs. The pin went to v1.0.0-beta.9 instead, the last
+release with the embedded manifest (opm-operator v1.0.0-beta.7). With it, an offline render
+(no network, empty CUE cache) of the bundle is byte-identical to the beta.2 one. The Job was not
+run on kind for this bump (no cluster could start in the environment that made it), so the
+beta.7 CRDs on a bare cluster are untested.
+
+**Means.** The CRD bootstrap now depends on a `cli` design choice that has moved away from it.
+Going past beta.9 needs either the operator module vendored and redirected like core and the
+catalog, or a `cli` path that installs CRDs without a registry. That is a finding for `cli/`.
+
 ## 2026-09-30: the move to the OPM beta line needed pins only
 
 **Tried.** Moving every OPM input of the image off the alpha line: core v2.0.0-alpha.10 to

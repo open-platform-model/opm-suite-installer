@@ -186,9 +186,12 @@ snapshots of a moving codebase, not a contract.
 - **A module's `debugValues` does not reach an instance-file render.** Every bundled application
   ships its own `values.cue`.
 - **The released `opm` binary is dynamically linked against glibc**, so the image base is
-  `debian:trixie-slim`, not Alpine. The pin is `v1.0.0-beta.2`: pin the `cli` tag whose
+  `debian:trixie-slim`, not Alpine. The pin is `v1.0.0-beta.9`: pin the `cli` tag whose
   embedded operator matches the beta line (it decides the CRDs the Job installs), and only a
   tag that carries release assets, since there is otherwise no tarball to install or checksum.
+  `v1.0.0-beta.10` and later render the operator from its CUE module instead of an embedded
+  manifest, so `--crds-only` needs a registry; do not move past `v1.0.0-beta.9` until that is
+  solved (see `FINDINGS.md`).
 
 ## Registry Policy
 
