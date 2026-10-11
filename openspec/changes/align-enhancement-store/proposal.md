@@ -2,7 +2,7 @@
 
 The OPM enhancements now live in an OpenSpec store, `opm-enhancements`. Every repo cites an
 enhancement the same way: the id beside a reason in words, never alone and never with a decision
-number. This repo cited one entry by decision number in three comments and one `AGENTS.md` line.
+number. This repo cited three entries by decision number in two comments and one `AGENTS.md` line.
 Its `openspec/config.yaml` also said nothing about the store, so an agent that writes a proposal
 here had no rule for the `Delivers` line or the comment form.
 

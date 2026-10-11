@@ -21,8 +21,8 @@ local patch in its skill files, so the config is the only place to change.
   chosen, because `openspec instructions` serves only `config.yaml`.
 - **The tool pass, then a hand pass.** `enh cite-rewrite` made two edits. One put a full
   decision title into `AGENTS.md`; it is rewritten as a short reason in words.
-- **Local `D3` stays in `platform/platform.cue`.** It names a decision of this repo's own
-  archived change `render-bundled-podinfo`, not an enhancement decision.
+- **The local decision 3 stays in `platform/platform.cue`, named in words.** It is a decision of
+  this repo's own archived change `render-bundled-podinfo`, not an enhancement decision.
 
 ## Risks / Trade-offs
 
