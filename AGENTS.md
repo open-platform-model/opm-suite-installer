@@ -257,8 +257,10 @@ it carries this repo's constitution and the rules each artifact must satisfy.
 OPM enhancements live in the OpenSpec store `opm-enhancements` (`references:` in
 `openspec/config.yaml`). Read an entry with `openspec show <id>-<slug> --store opm-enhancements`.
 If a change delivers a line of an entry's `tasks.md`, its proposal gets `## Enhancement` with one
-line `Delivers NNNN, task X.Y.` per task; otherwise `None.`. At archive, a PR on `enhancements`
-ticks the delivered line. There is no `enhancement.yaml` file.
+line `Delivers NNNN, task X.Y.` per task; otherwise `None.`. Name the delivered line in the PR
+body; after the repo PR merges, a PR on `enhancements` ticks that line. If OpenSpec warns that the
+store `opm-enhancements` is not registered, report the warning and go on; the human runs
+`task enhancements:register`. There is no `enhancement.yaml` file.
 
 Cite an enhancement in a comment, a script or a document only beside a reason in words, such as
 `(enhancement 0006)` after the sentence it explains. Several: `(enhancements 0010 and 0011)`. An
