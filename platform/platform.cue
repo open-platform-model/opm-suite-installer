@@ -1,6 +1,6 @@
 // The baked platform. Every render passes `--platform /opt/opm/platform`,
-// which is 0006:D21 precedence source 1 and outranks both the cluster
-// Platform CR and ~/.opm/platform (D3).
+// which is the first source in the platform precedence order (enhancement
+// 0006) and outranks both the cluster Platform CR and ~/.opm/platform (D3).
 //
 // Two reasons it is baked rather than resolved from the cluster. Resolving a
 // Platform CR generates a platform module and pulls its dependency closure

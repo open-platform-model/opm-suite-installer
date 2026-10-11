@@ -171,9 +171,10 @@ snapshots of a moving codebase, not a contract.
   on operator v1.0.0-alpha.14** (see `FINDINGS.md`; not re-tested since). `--crds-only`, or
   `--skip-platform`, avoids seeding it.
 - **Platform precedence is `--platform <dir>` > cluster `Platform` CR > `~/.opm/platform/`**
-  (enhancement 0006, "Platform-source flag surface (single `--platform <file>` override + automatic precedence, with source-provenance reporting); resolves OQ14"). The cluster-CR path generates a platform module and resolves its dependency
-  closure from the registry, which is a network call. A self-contained image bakes a platform
-  module and passes `--platform`. Verified 2026-09-22.
+  (enhancement 0006, the platform-source flag decision). The cluster-CR path generates a
+  platform module and resolves its dependency closure from the registry, which is a network
+  call. A self-contained image bakes a platform module and passes `--platform`. Verified
+  2026-09-22.
 - **Offline operation does not depend on a warm `CUE_CACHE_DIR`.** Vendoring every dependency and
   redirecting it with `cue.mod/local-module.cue` renders with an empty cache and no network at
   all. Verified 2026-09-22; `task image:render` keeps it verified.
