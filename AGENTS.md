@@ -254,5 +254,15 @@ CUE registry mapping, `JOB_TIMEOUT` bounds how long `job:run` waits for the Job.
 Feature work goes through OpenSpec (`openspec/`). Read `openspec/config.yaml` before proposing:
 it carries this repo's constitution and the rules each artifact must satisfy.
 
+OPM enhancements live in the OpenSpec store `opm-enhancements` (`references:` in
+`openspec/config.yaml`). Read an entry with `openspec show <id>-<slug> --store opm-enhancements`.
+If a change delivers a line of an entry's `tasks.md`, its proposal gets `## Enhancement` with one
+line `Delivers NNNN, task X.Y.` per task; otherwise `None.`. At archive, a PR on `enhancements`
+ticks the delivered line. There is no `enhancement.yaml` file.
+
+Cite an enhancement in a comment, a script or a document only beside a reason in words, such as
+`(enhancement 0006)` after the sentence it explains. Several: `(enhancements 0010 and 0011)`. An
+enhancement id is never alone, and never comes with a decision number.
+
 A change that only records a finding (`FINDINGS.md`) or fixes a typo does not need an OpenSpec
 change. Anything that adds or alters installer behavior does.
