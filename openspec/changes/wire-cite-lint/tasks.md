@@ -6,5 +6,5 @@
 
 ## 2. Verify
 
-- [ ] 2.1 `task cite-lint` reports 0 findings; `task lint` passes
-- [ ] 2.2 `openspec validate wire-cite-lint --strict` passes; actionlint and zizmor are clean on the workflow
+- [x] 2.1 `task cite-lint` reports 0 findings; `task lint` passes
+- [x] 2.2 `openspec validate wire-cite-lint --strict` passes; actionlint and zizmor are clean on the workflow
