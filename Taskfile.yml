@@ -37,6 +37,20 @@ tasks:
         if [ -z "$files" ]; then echo "no scripts yet"; exit 0; fi
         echo "$files" | xargs shellcheck -x
 
+  cite-lint:
+    desc: Check the CUE comments against the enhancement citation rule (enh cite-lint, the commit .github cite-lint.yml uses)
+    # No excludes: the tool reports 0 findings on the whole tree and skips
+    # vendor/ itself. If one is needed later, put it in a --exclude flag here
+    # AND in the `exclude` input of .github/workflows/cite-lint.yml, each with
+    # its reason; keep the two lists equal.
+    # ENH_REF is the default `enh-ref` of the .github cite-lint.yml at the
+    # .github pin of that workflow file; move both together.
+    # Not part of `check`: this task needs Go, `check` needs podman.
+    vars:
+      ENH_REF: e0335b2ec44e659c0191bc3523d79d17f26f8e7d
+    cmds:
+      - go run github.com/open-platform-model/enhancements/tools/enh@{{.ENH_REF}} cite-lint --root . .
+
   vendor:sync:
     desc: Refresh vendor/ from the published source of every platform dependency
     cmds:
