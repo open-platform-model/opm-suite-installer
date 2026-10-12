@@ -1,8 +1,8 @@
 ## 1. Task and CI
 
-- [ ] 1.1 Add the `cite-lint` task to `Taskfile.yml` (no excludes)
-- [ ] 1.2 Add `.github/workflows/cite-lint.yml` calling the shared workflow
-- [ ] 1.3 List `task cite-lint` in the `AGENTS.md` command table
+- [x] 1.1 Add the `cite-lint` task to `Taskfile.yml` (no excludes)
+- [x] 1.2 Add `.github/workflows/cite-lint.yml` calling the shared workflow
+- [x] 1.3 List `task cite-lint` in the `AGENTS.md` command table
 
 ## 2. Verify
 
