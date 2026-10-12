@@ -235,6 +235,7 @@ the task, which is the one action in this repo that contacts a registry.
 | Command | Purpose |
 | --- | --- |
 | `task lint` | `shellcheck` every script |
+| `task cite-lint` | Check the CUE comments against the enhancement citation rule (needs Go; CI runs the same tool) |
 | `task build` | Build the installer image |
 | `task vendor:sync` | Refresh `vendor/` from the published source of every platform pin |
 | `task image:render` | Prove the built image still renders offline: no network, empty CUE cache |
