@@ -171,9 +171,10 @@ snapshots of a moving codebase, not a contract.
   on operator v1.0.0-alpha.14** (see `FINDINGS.md`; not re-tested since). `--crds-only`, or
   `--skip-platform`, avoids seeding it.
 - **Platform precedence is `--platform <dir>` > cluster `Platform` CR > `~/.opm/platform/`**
-  (0006:D21). The cluster-CR path generates a platform module and resolves its dependency
-  closure from the registry, which is a network call. A self-contained image bakes a platform
-  module and passes `--platform`. Verified 2026-09-22.
+  (enhancement 0006, the platform-source flag decision). The cluster-CR path generates a
+  platform module and resolves its dependency closure from the registry, which is a network
+  call. A self-contained image bakes a platform module and passes `--platform`. Verified
+  2026-09-22.
 - **Offline operation does not depend on a warm `CUE_CACHE_DIR`.** Vendoring every dependency and
   redirecting it with `cue.mod/local-module.cue` renders with an empty cache and no network at
   all. Verified 2026-09-22; `task image:render` keeps it verified.
@@ -252,6 +253,18 @@ CUE registry mapping, `JOB_TIMEOUT` bounds how long `job:run` waits for the Job.
 
 Feature work goes through OpenSpec (`openspec/`). Read `openspec/config.yaml` before proposing:
 it carries this repo's constitution and the rules each artifact must satisfy.
+
+OPM enhancements live in the OpenSpec store `opm-enhancements` (`references:` in
+`openspec/config.yaml`). Read an entry with `openspec show <id>-<slug> --store opm-enhancements`.
+If a change delivers a line of an entry's `tasks.md`, its proposal gets `## Enhancement` with one
+line `Delivers NNNN, task X.Y.` per task; otherwise `None.`. Name the delivered line in the PR
+body; after the repo PR merges, a PR on `enhancements` ticks that line. If OpenSpec warns that the
+store `opm-enhancements` is not registered, report the warning and go on; the human runs
+`task enhancements:register`. There is no `enhancement.yaml` file.
+
+Cite an enhancement in a comment, a script or a document only beside a reason in words, such as
+`(enhancement 0006)` after the sentence it explains. Several: `(enhancements 0010 and 0011)`. An
+enhancement id is never alone, and never comes with a decision number.
 
 A change that only records a finding (`FINDINGS.md`) or fixes a typo does not need an OpenSpec
 change. Anything that adds or alters installer behavior does.

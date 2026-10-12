@@ -1,5 +1,9 @@
 schema: spec-driven
 
+references:
+  - id: opm-enhancements
+    remote: https://github.com/open-platform-model/enhancements.git
+
 context: |
   # opm-suite-installer Constitution
 
@@ -108,6 +112,19 @@ context: |
   A "module not found" error is a mapping or network problem. Starting a local registry is not
   the fix.
 
+  ## Enhancements
+
+  OPM enhancements live in the OpenSpec store `opm-enhancements` (see `references:`). Read an
+  entry with `openspec show <id>-<slug> --store opm-enhancements`; its `tasks.md` says which
+  repo still has work. A change here that delivers a line of an entry's `tasks.md` says so in
+  its proposal (`## Enhancement`, `Delivers NNNN, task X.Y.`). If OpenSpec warns that the store
+  `opm-enhancements` is not registered, report the warning and go on; the human runs
+  `task enhancements:register`.
+
+  In a comment, a script or a document, cite an enhancement only beside a reason in words,
+  such as `(enhancement 0006)` after the sentence it explains. An enhancement id is never
+  alone, and never comes with a decision number.
+
   ## Validation Gates
 
   `task lint` (shellcheck) and `task check` before a change lands. Once an image exists,
@@ -121,6 +138,8 @@ rules:
     - Name the alternative that was not chosen, including "do nothing".
     - Scope MUST be one capability, finishable in one session (Principle VI).
     - If the change needs something `opm` cannot do, say so explicitly (Principle II).
+    - "If the change delivers a line of an enhancement's `tasks.md`, add `## Enhancement` with one line `Delivers NNNN, task X.Y.` per task; otherwise `None.`. Name the reason in words rather than restating the entry."
+    - An enhancement id appears only beside a reason in words, never alone, never with a decision number.
 
   design:
     - "Focus: HOW we will implement it technically."
@@ -160,3 +179,4 @@ operations:
     guidance:
       - Before archiving, confirm the `FINDINGS.md` entry exists if the change discovered
         anything, including that the idea did not work.
+      - "If the change delivers a line of an enhancement's `tasks.md`, name it in the PR body; after the repo PR merges, a PR on `enhancements` ticks that line."
