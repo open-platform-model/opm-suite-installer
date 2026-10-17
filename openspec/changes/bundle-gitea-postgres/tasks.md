@@ -44,7 +44,7 @@
   against live connections; whether the revert restored a schema Gitea accepted; what a second
   application cost in files and RBAC rows; the password-in-values seam. Report to `cli/`
   anything the hook contract needed that the entrypoint did not offer.
-- [ ] 4.2 Update `README.md` and `CLAUDE.md` (three bundled applications, the ordering rule,
+- [ ] 4.2 Update `README.md` and `AGENTS.md` (three bundled applications, the ordering rule,
   the two hook files), then run `task check` and the named cluster run (`kind` cluster
   `opm-suite`, from `task cluster:up`, through install, the succeeding upgrade and the failing
   one) and confirm both are green.

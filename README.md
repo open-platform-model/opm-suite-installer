@@ -215,9 +215,8 @@ sequenceDiagram
 - Whether that artifact can install itself **offline**, with no registry reachable.
 - What it costs: the RBAC surface, the loss of operator ownership, the platform pinning.
 
-The honest counter-argument is written down in `AGENTS.md` and tracked in `FINDINGS.md`: OPM
-already publishes modules as OCI artifacts, so an installer image duplicates a distribution
-channel that exists. This repo exists to find out whether the duplication buys anything.
+The honest counter-argument: OPM already publishes modules as OCI artifacts, so an installer
+image duplicates a distribution channel that exists. This repo exists to find out whether the duplication buys anything.
 
 ## Requirements
 
