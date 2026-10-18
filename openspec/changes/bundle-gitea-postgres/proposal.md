@@ -58,7 +58,7 @@ first real user.
 
 - **New files**: `modules/gitea/`, `modules/gitea-backup/`, four files under
   `bundle/instances/`, two `cue.mod/local-module.cue` entries, RBAC rules in `deploy/`.
-- **Modified**: `deploy/` RBAC, `README.md`, `CLAUDE.md`. The entrypoint is expected to need
+- **Modified**: `deploy/` RBAC, `README.md`, `AGENTS.md`. The entrypoint is expected to need
   no change; if it does, that is a finding about the hook contract.
 - **RBAC delta**: `apps/statefulsets`, `core/persistentvolumeclaims`, `batch/jobs`, all
   namespaced, with the same verbs as the existing kinds.
