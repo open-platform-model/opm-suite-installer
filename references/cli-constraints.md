@@ -41,8 +41,6 @@ rely on it, and record any change in `FINDINGS.md`.
 - **An upgrade is a values change, and there is no `upgrade` verb.** Re-running `apply` from a newer
   image is the upgrade. A failed one re-applies the captured JSON as `values.cue` (JSON is CUE) and
   waits again. A module that moved between two releases can make its own revert fail at render.
-  Exit `74`: reverted and ready. Exit `75`: the revert failed too. Exit `76`: a `pre-apply` hook
-  refused.
 
 ## Platform and offline rendering
 
@@ -74,8 +72,6 @@ rely on it, and record any change in `FINDINGS.md`.
 
 ## Pitfalls
 
-- Adding an operator install to the `cluster:*` tasks to "help" a test. The image must bootstrap the
-  cluster; see the bare-cluster rule in `AGENTS.md`.
 - Trusting `Ready` from `opm instance status` after an upgrade. Check the rollout.
 - Assuming the instance record holds defaults a module resolves. It holds only declared values.
 - Removing a local replacement because `opm` warns it is ignored.
