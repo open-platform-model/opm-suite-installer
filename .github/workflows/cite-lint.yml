@@ -1,7 +1,7 @@
 name: Cite lint
 
 # The comment rule of the enhancements store, run by the shared reusable
-# workflow of open-platform-model/.github (its README, "cite-lint"). The tool
+# workflow of open-platform-model/.github (its references/cite-lint.md). The tool
 # commit lives in that workflow; `task cite-lint` runs the same tool at the
 # same commit. The repo only reads: no secret, read-only token.
 # No excludes: the tree has 0 findings. If one is added, keep it equal to the
