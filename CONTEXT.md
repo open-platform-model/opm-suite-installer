@@ -11,7 +11,7 @@ Router only. Facts and rules are in `AGENTS.md`.
 | Create, reset or debug the test cluster | `AGENTS.md` | `hack/` |
 | Start a feature change or alter installer behavior | `openspec/config.yaml` | `openspec/changes/` |
 | Record a finding | `FINDINGS.md` | |
-| Fix a lint failure on, or write a comment that cites an enhancement | `references/enhancements.md` at the workspace root | `.github/workflows/` |
+| Write a comment that cites an enhancement, or fix the lint that checks it | `references/enhancements.md` at the workspace root | `.github/workflows/` |
 | Deliver an enhancement | `references/enhancements.md` at the workspace root | |
 | Look up a registry mapping or a CUE resolution problem | `references/registry.md` at the workspace root | |
 | Commit, open a PR or write GitHub text | `references/git-text.md` at the workspace root | |
