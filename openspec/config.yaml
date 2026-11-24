@@ -180,3 +180,6 @@ operations:
       - Before archiving, confirm the `FINDINGS.md` entry exists if the change discovered
         anything, including that the idea did not work.
       - "If the change delivers a line of an enhancement's `tasks.md`, name it in the PR body; after the repo PR merges, a PR on `enhancements` ticks that line."
+
+# Keep the generated skills in this repo; stops openspec update from asking.
+skillsScope: project

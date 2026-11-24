@@ -64,6 +64,8 @@ These are hard constraints. They keep the experiment cheap to throw away.
 | `hack/` | The kind cluster config and the `vendor:sync` and `image:render` scripts |
 | `references/` | Detail files for the router |
 | `openspec/` | OpenSpec workspace: constitution in `config.yaml`, specs, changes |
+| `.agents/skills/` | The generated OpenSpec skills, never edited because every update rewrites them |
+| `.claude/skills/` | Links to the skills in `.agents/skills/` |
 | `Containerfile` | The installer image build |
 | `FINDINGS.md` | What the experiment taught, negative results included |
 
