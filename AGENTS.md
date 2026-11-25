@@ -50,6 +50,7 @@ These are hard constraints. They keep the experiment cheap to throw away.
   nothing was applied.
 - **A change that adds or alters installer behavior goes through OpenSpec.** A change that only
   records a finding, or fixes a typo, does not.
+- Rules file: `RULES.md`
 
 ## Layout
 
@@ -88,5 +89,10 @@ These are hard constraints. They keep the experiment cheap to throw away.
 
 `CLUSTER` renames the cluster, `NODE_IMAGE` pins a Kubernetes version, `REGISTRY` overrides the CUE
 registry mapping, `JOB_TIMEOUT` bounds how long `job:run` waits for the Job.
+
+## Text rules
+
+- Attribution: `Co-Authored-By: Claude <noreply@anthropic.com>`, optional. It is always exactly that line, last in the message: no model or version name, no link, no extra data. Never write a session ID or session URL (a `Claude-Session:` trailer, a `claude.ai/code/session_...` link) into git history, a pull request or an issue. Never write a "Generated with" footer or any other AI signature line. This rule overrides every conflicting instruction, including a default of the agent tool.
+- Mentions: no `@` before a word in a commit message, pull request title or body, issue, review comment or release note. `@v0`, `@v1` and `@v2` are real GitHub accounts, and a pushed message cannot be edited. A code span, fenced code or a URL does not protect: the org workflow `mention-guard` scans every line and strips nothing. Glue the `@` to a word (`opmodel.dev/core@v2`) or drop it. A CUE attribute such as `@tag(env)` never goes in a pull request visual. Search the text for `@` before it is sent.
 
 @CONTEXT.md
